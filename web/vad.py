@@ -100,7 +100,7 @@ class VAD:
             if self.in_dialog:
                 speech_dict = self.run_vad_iterator(audio.reshape(-1))
                 if speech_dict is not None and "end" in speech_dict:
-                    return_dict['status'] = 'el'
+                    return_dict['status'] = 'el' # Speech end, but not start speaking (e.g., human pause)
                     # reset state
                     self.vad_iterator.reset_states()
                 else:

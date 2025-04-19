@@ -394,7 +394,7 @@ def handle_audio(data):
             connected_users[sid][0].start()
             output_data = connected_users[sid][1].tts_data.get()
             if output_data is not None:
-                print("Sid: ", sid, "Send TTS data")
+                print("Sid: ", sid, "Send TTS data") #TTS data is streamed here when the decoder generates output
                 emit('audio', output_data.astype(np.int16).tobytes())
 
         if connected_users[sid][1].tts_over_time > 0:
@@ -405,6 +405,7 @@ def handle_audio(data):
         audio_data = np.frombuffer(bytes(data['audio']), dtype=np.int16)
         sample_rate = data['sample_rate']
         
+
         connected_users[sid][1].pcm_fifo_queue.put(audio_data.astype(np.float32) / 32768.0)
 
     else:
