@@ -12,9 +12,10 @@ import time
 import torchaudio
 import datetime
 import builtins
-
 import numpy as np
 
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from copy import deepcopy
 from threading import Timer
 from flask import Flask, render_template, request
@@ -135,6 +136,7 @@ def generate(outputs, sid):
     """
     # Stage3: start speak
     connected_users[sid][1].is_generate = True
+    emit_state_update(sid, generating=True)
 
     outputs = connected_users[sid][1].pipeline_obj.pipeline_proc.speech_dialogue(None, **outputs)
     connected_users[sid][1].generate_outputs = deepcopy(outputs)
@@ -160,6 +162,7 @@ def generate(outputs, sid):
         del outputs['hidden_state']
         outputs = connected_users[sid][1].pipeline_obj.pipeline_proc.speech_dialogue(None, **outputs)
         connected_users[sid][1].generate_outputs = deepcopy(outputs)
+        emit_state_update(sid, dialog_state=outputs.get('stat'))
         if outputs['stat'] == 'dialog_cs':
             cur_hidden_state.append(outputs['hidden_state'])
             if "�" in outputs['text'][len(last_text):]:
@@ -199,6 +202,7 @@ def generate(outputs, sid):
                                    is_last_chunk=True)
             cur_text = ""
     connected_users[sid][1].is_generate = False
+    emit_state_update(sid, generating=False)
 
 def llm_prefill(data, outputs, sid, is_first_pack=False):
     """
@@ -217,14 +221,17 @@ def llm_prefill(data, outputs, sid, is_first_pack=False):
         # Satge1: start listen
         # stat will be auto set to 'dialog_cl' after Stage1
         ## Note: ("auto" really is "hopefully", because this is subject to model decision. It's just that most likely for the first chunk, the model will decide to continue listening. There is no special mechanism here.)
+        ## Note 2: very importantly, this can occur WHILE a generation thread is running. If the model subsequently predict another 'ss' from this new IPU, then the ongoing generation if any, will be dropped. And a new generation will be triggered.
         outputs = connected_users[sid][1].pipeline_obj.pipeline_proc.speech_dialogue(
                                                                      torch.tensor(data['feature']), 
                                                                      **outputs)
+        emit_state_update(sid, dialog_state=outputs.get('stat'))
     
     ## This is a chunk level label indicating that this chunk is from when VAD state is in_dialog = True and when a timeout event occurred at this chunk
     if data['status'] == 'ipu_el':
         ## Reset VAD state to in_dialog = False
         connected_users[sid][1].wakeup_and_vad.in_dialog = False
+        emit_state_update(sid, vad_state=False)
         print("Sid: ", sid, " Detect vad time out")
 
     ## This 'ipu_cl' is a chunk level label indicating that this chunk is from when VAD state is in_dialog = True and no timeout 
@@ -236,19 +243,23 @@ def llm_prefill(data, outputs, sid, is_first_pack=False):
             outputs = connected_users[sid][1].pipeline_obj.pipeline_proc.speech_dialogue(
                                                                          torch.tensor(data['feature']), 
                                                                          **outputs)
+            emit_state_update(sid, dialog_state=outputs.get('stat'))
 
                                  
         if is_first_pack:## Forces the model to the 'dialog_cl' state for the first pack
             outputs['stat'] = 'dialog_cl'
+            emit_state_update(sid, dialog_state=outputs.get('stat'))
 
         if outputs['stat'] == 'dialog_el':## If the model decides that it will stop listening
             connected_users[sid][1].wakeup_and_vad.in_dialog = False #LLM decision causes active reset of the VAD state
+            emit_state_update(sid, vad_state=False)
             print("Sid: ", sid, " Detect invalid break")
 
         if outputs['stat'] == 'dialog_ss':## If the model decides that it will stop listening and start generating (and speaking)
             connected_users[sid][1].interrupt()
             print("Sid: ", sid, " Detect break")
             connected_users[sid][1].wakeup_and_vad.in_dialog = False #LLM decision causes active reset of the VAD state
+            emit_state_update(sid, vad_state=False)
             ##We stop feeding in user audio chunk and run a separate generate thread to generate the output
             generate_thread = threading.Thread(target=generate, args=(deepcopy(outputs), sid))
             generate_thread.start()
@@ -286,6 +297,7 @@ def send_pcm(sid):
 
         if res['status'] == 'ipu_sl':
             print("Sid: ", sid, " Vad start")
+            emit_state_update(sid, vad_state=True)
             outputs = deepcopy(connected_users[sid][1].generate_outputs)
             outputs['adapter_cache'] = None
             outputs['encoder_cache'] = None
@@ -330,9 +342,17 @@ def disconnect_user(sid):
         time.sleep(3)
         del connected_users[sid]
 
-@app.route('/')
+# @app.route('/')
+# def index():
+#     return render_template('enhanced_demo.html')
+
+@app.route('/demo')
 def index():
     return render_template('demo.html')
+
+@app.route('/enhanced')
+def enhanced_demo():
+    return render_template('enhanced_demo.html')
 
 @socketio.on('connect')
 def handle_connect():
@@ -348,6 +368,10 @@ def handle_connect():
     connected_users[sid][0].start()
     pcm_thread = threading.Thread(target=send_pcm, args=(sid,))
     pcm_thread.start()
+    
+    # Send initial state
+    emit_state_update(sid, vad_state=False, dialog_state='dialog_sl', generating=False)
+    
     tts_pool.print_info()
     pipeline_pool.print_info()
     print(f'User {sid} connected')
@@ -431,6 +455,22 @@ def handle_audio(data):
 
     else:
         disconnect()
+
+def emit_state_update(sid, vad_state=None, dialog_state=None, generating=None):
+    """
+    Emit state updates to the enhanced demo interface
+    """
+    if sid in connected_users:
+        state_data = {}
+        if vad_state is not None:
+            state_data['vad_state'] = vad_state
+        if dialog_state is not None:
+            state_data['dialog_state'] = dialog_state
+        if generating is not None:
+            state_data['generating'] = generating
+        
+        if state_data:
+            socketio.emit('state_update', state_data, to=sid)
 
 if __name__ == "__main__":
     print("Start Freeze-Omni sever") 
