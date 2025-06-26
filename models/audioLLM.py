@@ -238,9 +238,10 @@ class AudioLLM(torch.nn.Module):
             }
 
         # Call the _generate_one_step method to generate one step output, including past_key_values, etc.
+        # The main purpose here is to get the system role and prompts encoded.
         _, past_key_values, stat, _ = self._generate_one_step(
-                                                copy.deepcopy(inputs), "sl")
-        
+                                                copy.deepcopy(inputs), "dialog_sl")
+                                                
         # Return the generated past_key_values
         return past_key_values
 
@@ -255,7 +256,9 @@ class AudioLLM(torch.nn.Module):
         buffer = extra_inputs.get('encoder_cache', None)
         cnn_cache = extra_inputs.get('adapter_cache', None)
         pe_index = extra_inputs.get('pe_index', 0)
-        if extra_inputs['stat'] == 'sl' or extra_inputs['stat'] == 'cl':
+
+        ## This stat is the current dialog state of the system, not of the user audio chunk
+        if extra_inputs['stat'] == 'dialog_sl' or extra_inputs['stat'] == 'dialog_cl':
             # Encoder
             
             if buffer is None:
@@ -274,7 +277,7 @@ class AudioLLM(torch.nn.Module):
             attention_mask = encoder_mask.squeeze(1) # 1, T
 
         # prompt
-        if extra_inputs['stat'] == 'sl':
+        if extra_inputs['stat'] == 'dialog_sl':
             if self.prompt_finetune:
                 prompt_ids = self.prompt_ids.repeat(1, 1).to(inputs_embeds.device)
                 prompt_embeds = self.prompt_embeddings(
@@ -288,7 +291,7 @@ class AudioLLM(torch.nn.Module):
 
         # chat mode
         if self.chat_template is not None:
-            if extra_inputs['stat'] == 'sl':
+            if extra_inputs['stat'] == 'dialog_sl':
                 chat_prefix = self.chat_template['prefix'].to(
                                                     inputs_embeds.device)
                 chat_prefix = torch.cat((torch.tensor([[self.tokenizer.eod_id]]
@@ -298,14 +301,15 @@ class AudioLLM(torch.nn.Module):
                                 True).to(inputs_embeds.device)
                 inputs_embeds = torch.cat((chat_prefix_embeds, inputs_embeds), 1)
                 attention_mask = torch.cat((chat_prefix_mask, attention_mask), 1)
-            if extra_inputs['stat'] == 'ss':
+            if extra_inputs['stat'] == 'dialog_ss':
+            # if extra_inputs['stat'] == 'ss':
                 chat_suffix = self.chat_template['suffix'].to('cuda')
                 chat_suffix_embeds = self.llm_decoder.transformer.wte(chat_suffix)
                 chat_suffix_mask = torch.full(chat_suffix.shape, True).to('cuda')
                 inputs_embeds = chat_suffix_embeds
                 attention_mask = chat_suffix_mask
         
-        if extra_inputs['stat'] != 'cs':
+        if extra_inputs['stat'] != 'dialog_cs':
             inputs = {
                 'inputs_embeds': inputs_embeds.half(),
                 'attention_mask': attention_mask,
@@ -409,7 +413,7 @@ class AudioLLM(torch.nn.Module):
         - hidden_state: The model's hidden state, used to maintain cross-step contextual information.
         """
         outputs = self.llm_decoder.model(**inputs)
-        if stat == 'sl' or stat == 'cl':
+        if stat == 'dialog_sl' or stat == 'dialog_cl':## While listening, we further use the predictor head to update dialogue state based on the last layer's hidden state output
             state_logits = self.predictor_head(
                         outputs['last_hidden_state'])[0, :]
             prob = F.softmax(state_logits[:, :-1])
@@ -417,17 +421,26 @@ class AudioLLM(torch.nn.Module):
             state_1 = state_prob[1]
             state_2 = state_prob[2]
             print("State 1 prob: {:.4f}, State 2 prob: {:.4f}".format(state_1.item(), state_2.item()))
-            if state_2 > 0.5:
-                return None, outputs['past_key_values'], 'el', None
-            if state_1 > 0.5:
-                return None, outputs['past_key_values'], 'ss', None
-            return None, outputs['past_key_values'], 'cl', None
 
+            if state_2 > 0.5:
+                ## 'dialog_el' indicates that the model thinks the user has ended speech, but won't start generating
+                return None, outputs['past_key_values'], 'dialog_el', None
+            if state_1 > 0.5:
+                ## 'dialog_ss' indicates that the model thinks the user has ended speech, and the model will start generating
+                return None, outputs['past_key_values'], 'dialog_ss', None
+
+            ## 'dialog_cl' indicates that the model thinks the user is still speaking, and the model will continue to listen
+            return None, outputs['past_key_values'], 'dialog_cl', None
+
+        ## While generating, then we generate a new token
         last_logit = self.llm_decoder.lm_head(outputs['last_hidden_state'][:, -1:, :])
         last_id = self._post_decode(last_logit, temperature=temperature, top_k=top_k, top_p=top_p)
         return_tts_state = outputs['last_hidden_state'][:, -1:, :]
 
+
         if last_id[0][0] == self.tokenizer.eod_id:
-            return None, outputs['past_key_values'], 'sl', return_tts_state
+            ## Generation complete, go back to listening state
+            return None, outputs['past_key_values'], 'dialog_sl', return_tts_state
         else:
-            return last_id, outputs['past_key_values'], 'cs', return_tts_state
+            ##Generation continues, return the last token id and past key values. dialog_cs indicates that the model is still generating text
+            return last_id, outputs['past_key_values'], 'dialog_cs', return_tts_state

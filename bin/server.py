@@ -143,13 +143,13 @@ def generate(outputs, sid):
     cur_hidden_state.append(outputs['hidden_state'])
 
     connected_users[sid][1].whole_text = ""
-    # Stage4: contiune speak until stat is set to 'sl'
-    # use 'stop' to interrupt generation, stat need to be manually set as 'sl'  
+    # Stage4: continue speak until stat is set to 'dialog_sl'
+    # use 'stop' to interrupt generation, stat need to be manually set as 'dialog_sl'  
     stop = False
     cur_text = ''
     last_text = ''
     generate_num = 0
-    while True:
+    while True:##Keep decoding until it drops out of the 'dialog_cs' state
         if connected_users[sid][1].stop_generate:
             break
         if len(outputs['past_tokens']) > 500:
@@ -160,7 +160,7 @@ def generate(outputs, sid):
         del outputs['hidden_state']
         outputs = connected_users[sid][1].pipeline_obj.pipeline_proc.speech_dialogue(None, **outputs)
         connected_users[sid][1].generate_outputs = deepcopy(outputs)
-        if outputs['stat'] == 'cs':
+        if outputs['stat'] == 'dialog_cs':
             cur_hidden_state.append(outputs['hidden_state'])
             if "�" in outputs['text'][len(last_text):]:
                 continue
@@ -212,40 +212,52 @@ def llm_prefill(data, outputs, sid, is_first_pack=False):
     - is_first_pack (bool, optional): Indicates if the current input packet is the first one in a new conversation
     """
 
-    if data['status'] == 'sl':
+    ## This 'ipu_sl' is a label on the audio chunk indicating the event of VAD state transition from in_dialog = False to True
+    if data['status'] == 'ipu_sl':
         # Satge1: start listen
-        # stat will be auto set to 'cl' after Stage1
+        # stat will be auto set to 'dialog_cl' after Stage1
+        ## Note: ("auto" really is "hopefully", because this is subject to model decision. It's just that most likely for the first chunk, the model will decide to continue listening. There is no special mechanism here.)
         outputs = connected_users[sid][1].pipeline_obj.pipeline_proc.speech_dialogue(
                                                                      torch.tensor(data['feature']), 
                                                                      **outputs)
     
-    if data['status'] == 'el':
+    ## This is a chunk level label indicating that this chunk is from when VAD state is in_dialog = True and when a timeout event occurred at this chunk
+    if data['status'] == 'ipu_el':
+        ## Reset VAD state to in_dialog = False
         connected_users[sid][1].wakeup_and_vad.in_dialog = False
         print("Sid: ", sid, " Detect vad time out")
 
-    if data['status'] == 'cl':
-        if outputs['stat'] == 'cl':
+    ## This 'ipu_cl' is a chunk level label indicating that this chunk is from when VAD state is in_dialog = True and no timeout 
+    if data['status'] == 'ipu_cl':
+        if outputs['stat'] == 'dialog_cl':## If the current dialogue state is continue listen,  then we call the LLM again and keep monitor dialogue state
+            
             # Stage2: continue listen
-            # stat will be auto set to 'ss' when endpoint is detected
+            # stat will be auto set to 'dialog_ss' when endpoint is detected
             outputs = connected_users[sid][1].pipeline_obj.pipeline_proc.speech_dialogue(
                                                                          torch.tensor(data['feature']), 
                                                                          **outputs)
-        if is_first_pack:
-            outputs['stat'] = 'cl'
-        if outputs['stat'] == 'el':
-            connected_users[sid][1].wakeup_and_vad.in_dialog = False
+
+                                 
+        if is_first_pack:## Forces the model to the 'dialog_cl' state for the first pack
+            outputs['stat'] = 'dialog_cl'
+
+        if outputs['stat'] == 'dialog_el':## If the model decides that it will stop listening
+            connected_users[sid][1].wakeup_and_vad.in_dialog = False #LLM decision causes active reset of the VAD state
             print("Sid: ", sid, " Detect invalid break")
-        if outputs['stat'] == 'ss':
+
+        if outputs['stat'] == 'dialog_ss':## If the model decides that it will stop listening and start generating (and speaking)
             connected_users[sid][1].interrupt()
             print("Sid: ", sid, " Detect break")
-            connected_users[sid][1].wakeup_and_vad.in_dialog = False
+            connected_users[sid][1].wakeup_and_vad.in_dialog = False #LLM decision causes active reset of the VAD state
+            ##We stop feeding in user audio chunk and run a separate generate thread to generate the output
             generate_thread = threading.Thread(target=generate, args=(deepcopy(outputs), sid))
             generate_thread.start()
+
     return outputs
 
 def send_pcm(sid):
     """
-    Sends PCM audio data to the dialogue system for processing.
+    Main loop where we send PCM audio data to the dialogue system for processing.
 
     Parameters:
     - sid (str): The session ID of the user.
@@ -261,19 +273,24 @@ def send_pcm(sid):
             connected_users[sid][1].stop_tts = True
             break
         time.sleep(0.01)
-        e = connected_users[sid][1].pcm_fifo_queue.get(chunk_szie)
+        e = connected_users[sid][1].pcm_fifo_queue.get(chunk_szie)#One audio chunk
         if e is None:
             continue
         print("Sid: ", sid, " Received PCM data: ", len(e))
+
+        ## Label the audio chunk based on VAD state
         res = connected_users[sid][1].wakeup_and_vad.predict(np.float32(e))
         
-        if res['status'] == 'sl':
+        ## For those audio chunk without a VAD label, i.e., chunks where VAD was in in_dialog = False and contains no voice activity, we will not send them to LLM
+
+
+        if res['status'] == 'ipu_sl':
             print("Sid: ", sid, " Vad start")
             outputs = deepcopy(connected_users[sid][1].generate_outputs)
             outputs['adapter_cache'] = None
             outputs['encoder_cache'] = None
             outputs['pe_index'] = 0
-            outputs['stat'] = 'sl'
+            outputs['stat'] = 'dialog_sl'
             outputs['last_id'] = None
             if 'text' in outputs:
                 del outputs['text']
@@ -281,18 +298,22 @@ def send_pcm(sid):
                 del outputs['hidden_state']
 
             send_dict = {}
+            ## Throw into the LLM audio chunks from the cached last chunks
             for i in range(len(res['feature_last_chunk'])):
                 if i == 0:
-                    send_dict['status'] = 'sl'
+                    ## Actually set the status to 'ipu_sl' for the first chunk in the cache
+                    send_dict['status'] = 'ipu_sl'
                 else:
-                    send_dict['status'] = 'cl'
+                    send_dict['status'] = 'ipu_cl'
                 send_dict['feature'] = res['feature_last_chunk'][i]
                 outputs = llm_prefill(send_dict, outputs, sid, is_first_pack=True)
-            send_dict['status'] = 'cl'
+            ##Label the current chunk, which was labeled by VAD as 'ipu_sl', as 'ipu_cl' because 'ipu_sl' has been assigned above to the first chunk in the cache.
+            send_dict['status'] = 'ipu_cl'
             send_dict['feature'] = res['feature']
             outputs = llm_prefill(send_dict, outputs, sid)
 
-        elif res['status'] == 'cl' or res['status'] == 'el':
+        ## For subsequent chunks, just throw them into the LLM
+        elif res['status'] == 'ipu_cl' or res['status'] == 'ipu_el':
             send_dict = {}
             send_dict['status'] = res['status']
             send_dict['feature'] = res['feature']

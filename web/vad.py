@@ -64,12 +64,12 @@ class VAD:
         Predict the Voice Activity Detection (VAD) status and return related features.
 
         Parameters:
-        - audio (torch.Tensor): A 1D or 2D tensor representing the input audio signal.
+        - audio (torch.Tensor): A 1D or 2D tensor representing the input audio signal (audio chunk).
 
         Returns:
         - return_dict (dict): A dictionary containing the VAD status and related features.
-            - 'status' (str): The current VAD status, which can be 'sl' (speech start), 
-                              'cl' (speech continue), or 'el' (speech end).
+            - 'status' (str): The current VAD status, which can be 'ipu_sl' (speech start), 
+                              'ipu_cl' (speech continue), or 'ipu_el' (speech end).
             - 'feature_last_chunk' (list of list of float): The feature of the last chunks.
             - 'feature' (list of list of float): The feature of the current chunk of audio.
             - 'history_feature' (list of list of list of float): The cached features of previous chunks.
@@ -100,29 +100,33 @@ class VAD:
             if self.in_dialog:
                 speech_dict = self.run_vad_iterator(audio.reshape(-1))
                 if speech_dict is not None and "end" in speech_dict:
-                    return_dict['status'] = 'el' # Speech end, but not start speaking (e.g., human pause)
+                    ## The last chunk which causes exceeding a threshold is labeled as 'ipu_el'. Note that the VAD does not transition back into the in_dialog = False state here. This transition is driven by external server code.
+                    return_dict['status'] = 'ipu_el' # Speech end, but not start speaking (e.g., human pause)
                     # reset state
                     self.vad_iterator.reset_states()
                 else:
-                    return_dict['status'] = 'cl'
+                    ## Most chunks will be labeled as 'ipu_cl' (continue speaking) when the VAD is in in_dialog state, even if those chunks do not contain VA themselves
+                    return_dict['status'] = 'ipu_cl'
             if not self.in_dialog:
                 speech_dict = self.run_vad_iterator(audio.reshape(-1))
                 if speech_dict is not None and "start" in speech_dict:
-                    return_dict['status'] = 'sl'
+                    ## The first chunk that causes the VAD to transition in in_dialog state will be labeld as 'ipu_sl'.
+                    return_dict['status'] = 'ipu_sl'
                     self.in_dialog = True
                     # self.vad_iterator.reset_states()
                 else:  
+                    ## In this case, the chunk is labeled as None.
                     # cache fbank feature
                     self.history[:-1] = self.history[1:].clone()
                     self.history[-1:] = self.input_chunk
 
             # return dict
-            if return_dict['status'] == 'sl':
+            if return_dict['status'] == 'ipu_sl':
                 # copy last 6 chunks
                 return_dict['feature_last_chunk'] = self.history[-6:].unsqueeze(1).numpy().tolist()
                 return_dict['feature'] = self.input_chunk.numpy().tolist()
                 return_dict['history_feature'] = self.history.numpy().tolist()
-            elif return_dict['status'] == 'cl' or return_dict['status'] == 'el':
+            elif return_dict['status'] == 'ipu_cl' or return_dict['status'] == 'ipu_el':
                 return_dict['feature_last_chunk'] = None
                 return_dict['feature'] = self.input_chunk.numpy().tolist()
                 return_dict['history_feature'] = self.history.numpy().tolist()

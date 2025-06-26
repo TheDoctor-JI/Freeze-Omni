@@ -115,25 +115,27 @@ def inference(pipeline, audio_processor, tts, configs):
     decoder_topk = 2
 
     # Satge0: preprocess
-    # set system role, stat will be set to 'sl'  
+    # set system role, stat will be set to 'dialog_sl'  
     stat = 'pre'
     outputs = pipeline.speech_dialogue(None, stat=stat, role="You are a helpful assistant.")
     chunk_size = audio_processor.get_chunk_size()
     
     # Satge1: start listen
-    # stat will be auto set to 'cl' after Stage1
+    # stat will be auto set to 'dialog_cl' after Stage1
     wav_input = torch.zeros(math.ceil(wav.shape[0] / chunk_size) * chunk_size)
     wav_input[:wav.shape[0]] = wav
     for i in range(0, wav_input.shape[0], chunk_size):
         fbank = audio_processor.process(wav_input[i:i+chunk_size])
         outputs = pipeline.speech_dialogue(fbank, **outputs)
-        outputs['stat'] = 'cl'
+        outputs['stat'] = 'dialog_cl'
     audio_processor.reset()
         
     outputs['adapter_cache'] = None
     outputs['encoder_cache'] = None
     outputs['pe_index'] = 0
-    outputs['stat'] = 'ss'
+
+    # outputs['stat'] = 'ss'
+    outputs['stat'] = 'dialog_ss'
 
     # Stage3: start speak
     outputs = pipeline.speech_dialogue(None, **outputs)
@@ -144,8 +146,8 @@ def inference(pipeline, audio_processor, tts, configs):
     last_text = ''
     cur_text = ''
     wav = []
-    # Stage4: contiune speak until stat is set to 'sl'
-    # use 'stop' to interrupt generation, stat need to be manually set as 'sl'  
+    # Stage4: contiune speak until stat is set to 'dialog_sl'
+    # use 'stop' to interrupt generation, stat need to be manually set as 'dialog_sl'  
     stop = False
     while True:
         if len(outputs['past_tokens']) > 128:
@@ -155,7 +157,8 @@ def inference(pipeline, audio_processor, tts, configs):
         del outputs['text']
         del outputs['hidden_state']
         outputs = pipeline.speech_dialogue(None, **outputs)
-        if outputs['stat'] == 'cs':
+        if outputs['stat'] == 'dialog_cs':
+        # if outputs['stat'] == 'cs':
             cur_hidden_state.append(outputs['hidden_state'])
             whole_text += outputs['text'][len(last_text):]
             cur_text += outputs['text'][len(last_text):]
@@ -169,7 +172,8 @@ def inference(pipeline, audio_processor, tts, configs):
                                 codec_chunk_size, codec_padding_size, decoder_topk, wav)
                         cur_hidden_state = []
                     cur_text = ""
-        if outputs['stat'] == 'sl':
+
+        if outputs['stat'] == 'dialog_sl':
             break
         # print(outputs['text'])
         last_text = outputs['text']
@@ -178,7 +182,7 @@ def inference(pipeline, audio_processor, tts, configs):
                 codec_chunk_size, codec_padding_size, decoder_topk, wav)
 
     sf.write(configs.output_wav, torch.cat(wav, -1).squeeze().float().cpu().numpy(), 24000)
-    outputs['stat'] = 'sl'
+    outputs['stat'] = 'dialog_sl'
     outputs['last_id'] = None
     print(whole_text)
 
