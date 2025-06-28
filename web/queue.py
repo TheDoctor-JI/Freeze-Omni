@@ -9,6 +9,91 @@ import numpy as np
 import torchaudio.compliance.kaldi as k
 import soundfile as sf
 
+class ProcPCMQueue:
+    def __init__(self):
+        """
+        Initialize the ProcPCMQueue for handling processed audio data dictionaries.
+        
+        Parameters:
+        - None
+        
+        Returns:
+        - None
+        """
+        self.queue = queue.Queue()
+        self.lock = threading.Lock()
+
+    def put(self, item):
+        """
+        Add a processed audio item (dictionary) to the queue in a thread-safe manner.
+        
+        Parameters:
+        - item (dict): Dictionary containing 'feature' and 'status' keys
+        
+        Returns:
+        - None
+        """
+        with self.lock:
+            self.queue.put(item)
+
+    def get(self, count=1):
+        """
+        Retrieve specified number of items from the queue in a thread-safe manner.
+        
+        Parameters:
+        - count (int): Number of items to retrieve (for compatibility, usually 1)
+        
+        Returns:
+        - dict or None: A dictionary containing feature and status if available, otherwise None.
+        """
+        with self.lock:
+            if not self.queue.empty():
+                return self.queue.get()
+            else:
+                return None
+
+    def clear(self):
+        """
+        Clear the queue in a thread-safe manner.
+        
+        Parameters:
+        - None
+        
+        Returns:
+        - None
+        """
+        with self.lock:
+            while not self.queue.empty():
+                self.queue.get()
+
+    def has_data(self):
+        """
+        Check if the queue contains any data.
+        
+        Parameters:
+        - None
+        
+        Returns:
+        - bool: True if the queue contains data, False otherwise.
+        """
+        with self.lock:
+            return not self.queue.empty()
+
+    def size(self):
+        """
+        Get the current size of the queue in a thread-safe manner.
+        
+        Parameters:
+        - None
+        
+        Returns:
+        - int: The number of items currently in the queue.
+        """
+        with self.lock:
+            return self.queue.qsize()
+
+
+
 class PCMQueue:
     def __init__(self):
         """

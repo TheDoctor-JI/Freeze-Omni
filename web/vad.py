@@ -12,12 +12,13 @@ from silero_vad.model import load_silero_vad
 from silero_vad.utils_vad import VADIterator
 
 class VAD:
-    def __init__(self, cache_history=10):
+    def __init__(self, cache_history=10, silence_threshold_ms=None):
         self.chunk_size = 16
         self.chunk_overlap = 3
         self.feat_dim = 80
         self.frame_size = 400
         self.frame_shift = 160
+        self.silence_threshold_ms = silence_threshold_ms
         self.frame_overlap = self.frame_size - self.frame_shift
         self.CHUNK = self.frame_shift * self.chunk_size
         self.cache_history = cache_history
@@ -37,7 +38,7 @@ class VAD:
         self.vad_iterator = VADIterator(self.vad_model, 
                                         threshold=0.8, 
                                         sampling_rate=16000, 
-                                        min_silence_duration_ms=2000, 
+                                        min_silence_duration_ms=2000 if self.silence_threshold_ms is None else self.silence_threshold_ms,
                                         speech_pad_ms=30)
         self.vad_iterator.reset_states()
 

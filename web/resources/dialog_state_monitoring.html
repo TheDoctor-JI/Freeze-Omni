@@ -157,8 +157,8 @@
             background: #6c757d;
         }
         .status-generating {
-            background: #ffc107;
-            box-shadow: 0 0 5px #ffc107;
+            background: #dc3545;
+            box-shadow: 0 0 5px #dc3545;
         }
         .dialog-state {
             padding: 8px 12px;
@@ -167,25 +167,22 @@
             text-align: center;
             margin: 5px 0;
         }
+        /* Updated dialog state colors - only 4 states */
         .state-dialog_sl {
-            background: #d4edda;
-            color: #155724;
+            background: #007bff;
+            color: white;
         }
         .state-dialog_cl {
-            background: #cce5ff;
-            color: #004085;
-        }
-        .state-dialog_el {
-            background: #f8d7da;
-            color: #721c24;
+            background: #28a745;
+            color: white;
         }
         .state-dialog_ss {
-            background: #fff3cd;
-            color: #856404;
+            background: #dc3545;
+            color: white;
         }
-        .state-dialog_cs {
-            background: #e2e3e5;
-            color: #383d41;
+        .state-no_decision {
+            background: #6c757d;
+            color: white;
         }
         .alert {
             display: none;
@@ -261,20 +258,15 @@
         .event-ipu_el {
             border-left-color: #dc3545;
         }
+        /* Updated dialog event colors to match the simplified states */
         .event-dialog_sl {
-            border-left-color: #28a745;
-        }
-        .event-dialog_cl {
             border-left-color: #007bff;
         }
-        .event-dialog_el {
-            border-left-color: #dc3545;
+        .event-dialog_cl {
+            border-left-color: #28a745;
         }
         .event-dialog_ss {
-            border-left-color: #ffc107;
-        }
-        .event-dialog_cs {
-            border-left-color: #6c757d;
+            border-left-color: #dc3545;
         }
         .event-time {
             color: #6c757d;
@@ -369,7 +361,7 @@
                             <span>Dialog SS: <strong id="genStatus">False</strong></span>
                         </div>
                     </div>
-                    <div class="dialog-state" id="dialogState">dialog_sl</div>
+                    <div class="dialog-state" id="dialogState">no_decision</div>
                 </div>
 
                 <!-- Timeline: VAD State -->
@@ -444,14 +436,20 @@
         let isRecording = false;
         const fixedSampleRate = 16000;
 
-        // Timeline data storage (10 seconds at 100ms intervals = 100 data points)
+        // Timeline data storage with queue-based system
         const timelineLength = 100;
         let vadTimeline = new Array(timelineLength).fill(false);
-        let dialogTimeline = new Array(timelineLength).fill('dialog_sl');
+        
+        // Enhanced dialog timeline with state preservation queue
+        let dialogTimeline = new Array(timelineLength).fill('no_decision');
+        let dialogStateQueue = []; // Queue for preserving important dialog state changes
+        let lastSignificantState = 'no_decision';
+        let stateHoldDuration = 0; // How long to hold current significant state
+        const minStateHoldTime = 10; // Minimum frames to hold a significant state (1 second at 100ms intervals)
 
         // Current state tracking
         let currentVadState = false;
-        let currentDialogState = 'dialog_sl';
+        let currentDialogState = 'no_decision';
         let dialogSSTriggered = false;
 
         // Chart.js instances
@@ -499,14 +497,13 @@
                 }
             });
 
-            // Dialog State Chart
+            // Dialog State Chart - Updated for queue-based system
             const dialogCtx = document.getElementById('dialogChart').getContext('2d');
             const stateColors = {
-                'dialog_sl': '#d4edda',
-                'dialog_cl': '#cce5ff', 
-                'dialog_el': '#f8d7da',
-                'dialog_ss': '#fff3cd',
-                'dialog_cs': '#e2e3e5'
+                'dialog_sl': '#007bff',    // Blue
+                'dialog_cl': '#28a745',    // Green
+                'dialog_ss': '#dc3545',    // Red
+                'no_decision': '#6c757d'   // Grey
             };
 
             dialogChart = new Chart(dialogCtx, {
@@ -515,18 +512,13 @@
                     labels: new Array(timelineLength).fill('').map((_, i) => `${(timelineLength - i) * 0.1}s`),
                     datasets: [{
                         label: 'Start Listen',
-                        data: dialogTimeline.map(state => state === 'dialog_sl' ? 5 : 0),
+                        data: dialogTimeline.map(state => state === 'dialog_sl' ? 4 : 0),
                         backgroundColor: stateColors['dialog_sl'],
                         borderWidth: 0
                     }, {
                         label: 'Continue Listen',
-                        data: dialogTimeline.map(state => state === 'dialog_cl' ? 4 : 0),
+                        data: dialogTimeline.map(state => state === 'dialog_cl' ? 3 : 0),
                         backgroundColor: stateColors['dialog_cl'],
-                        borderWidth: 0
-                    }, {
-                        label: 'End Listen',
-                        data: dialogTimeline.map(state => state === 'dialog_el' ? 3 : 0),
-                        backgroundColor: stateColors['dialog_el'],
                         borderWidth: 0
                     }, {
                         label: 'Start Speak',
@@ -534,9 +526,9 @@
                         backgroundColor: stateColors['dialog_ss'],
                         borderWidth: 0
                     }, {
-                        label: 'Continue Speak',
-                        data: dialogTimeline.map(state => state === 'dialog_cs' ? 1 : 0),
-                        backgroundColor: stateColors['dialog_cs'],
+                        label: 'No Decision',
+                        data: dialogTimeline.map(state => state === 'no_decision' ? 1 : 0),
+                        backgroundColor: stateColors['no_decision'],
                         borderWidth: 0
                     }]
                 },
@@ -551,11 +543,11 @@
                         y: {
                             stacked: true,
                             beginAtZero: true,
-                            max: 5,
+                            max: 4,
                             ticks: {
                                 stepSize: 1,
                                 callback: function(value) {
-                                    const states = ['', 'CS', 'SS', 'EL', 'CL', 'SL'];
+                                    const states = ['', 'No Decision', 'SS', 'CL', 'SL'];
                                     return states[value] || '';
                                 }
                             }
@@ -571,26 +563,77 @@
             });
         }
 
-        // Update timeline data
+        // Enhanced dialog state queue management
+        function addToDialogStateQueue(newState) {
+            const isSignificant = newState !== 'no_decision';
+            
+            if (isSignificant) {
+                // Add significant state to queue with timestamp
+                dialogStateQueue.push({
+                    state: newState,
+                    timestamp: Date.now(),
+                    duration: 0
+                });
+                
+                // Keep only last 10 significant states to prevent memory buildup
+                if (dialogStateQueue.length > 10) {
+                    dialogStateQueue.shift();
+                }
+                
+                lastSignificantState = newState;
+                stateHoldDuration = minStateHoldTime; // Reset hold duration
+                
+                console.log(`Added significant state to queue: ${newState}, queue length: ${dialogStateQueue.length}`);
+            }
+        }
+
+        // Process dialog state queue for timeline display
+        function processDialogStateForTimeline() {
+            let stateToDisplay = 'no_decision';
+            
+            // Check if we should hold the last significant state
+            if (stateHoldDuration > 0) {
+                stateToDisplay = lastSignificantState;
+                stateHoldDuration--;
+            } else if (dialogStateQueue.length > 0) {
+                // Get the most recent significant state from queue
+                const recentState = dialogStateQueue[dialogStateQueue.length - 1];
+                
+                // If it's still fresh (within last 2 seconds), display it
+                if (Date.now() - recentState.timestamp < 2000) {
+                    stateToDisplay = recentState.state;
+                } else {
+                    // Clean up old states from queue
+                    dialogStateQueue = dialogStateQueue.filter(item => 
+                        Date.now() - item.timestamp < 5000 // Keep states for 5 seconds max
+                    );
+                }
+            }
+            
+            return stateToDisplay;
+        }
+
+        // Update timeline data with enhanced dialog state management
         function updateTimeline() {
             // Shift arrays left and add new data
             vadTimeline.shift();
             vadTimeline.push(currentVadState);
             
+            // Enhanced dialog timeline processing
             dialogTimeline.shift();
-            dialogTimeline.push(currentDialogState);
+            const displayState = processDialogStateForTimeline();
+            dialogTimeline.push(displayState);
 
             // Update chart data
             vadChart.data.datasets[0].data = [...vadTimeline];
             vadChart.data.datasets[0].backgroundColor = vadTimeline.map(val => val ? '#28a745' : '#e9ecef');
             vadChart.update('none');
 
-            // Update dialog chart datasets
-            dialogChart.data.datasets[0].data = dialogTimeline.map(state => state === 'dialog_sl' ? 5 : 0);
-            dialogChart.data.datasets[1].data = dialogTimeline.map(state => state === 'dialog_cl' ? 4 : 0);
-            dialogChart.data.datasets[2].data = dialogTimeline.map(state => state === 'dialog_el' ? 3 : 0);
-            dialogChart.data.datasets[3].data = dialogTimeline.map(state => state === 'dialog_ss' ? 2 : 0);
-            dialogChart.data.datasets[4].data = dialogTimeline.map(state => state === 'dialog_cs' ? 1 : 0);
+            // Update dialog chart datasets with processed timeline
+            dialogChart.data.datasets[0].data = dialogTimeline.map(state => state === 'dialog_sl' ? 4 : 0);
+            dialogChart.data.datasets[1].data = dialogTimeline.map(state => state === 'dialog_cl' ? 3 : 0);
+            dialogChart.data.datasets[2].data = dialogTimeline.map(state => state === 'dialog_ss' ? 2 : 0);
+            dialogChart.data.datasets[3].data = dialogTimeline.map(state => state === 'no_decision' ? 1 : 0);
             dialogChart.update('none');
         }
 
@@ -600,13 +643,26 @@
             vadStatus.textContent = currentVadState ? 'True' : 'False';
             vadIndicator.className = `status-indicator ${currentVadState ? 'status-active' : 'status-inactive'}`;
 
-            // Dialog SS status (renamed from "Generating")
+            // Dialog SS status
             genStatus.textContent = dialogSSTriggered ? 'Triggered' : 'False';
             genIndicator.className = `status-indicator ${dialogSSTriggered ? 'status-generating' : 'status-inactive'}`;
 
-            // Dialog state
-            dialogState.textContent = currentDialogState;
+            // Dialog state - always show current state for immediate feedback
+            const stateLabels = {
+                'dialog_sl': 'SL (Start Listen)',
+                'dialog_cl': 'CL (Continue Listen)', 
+                'dialog_ss': 'SS (Start Speak)',
+                'no_decision': 'No Decision'
+            };
+            
+            dialogState.textContent = stateLabels[currentDialogState] || currentDialogState;
             dialogState.className = `dialog-state state-${currentDialogState}`;
+            
+            // Add queue status for debugging
+            if (dialogStateQueue.length > 0) {
+                const queueInfo = dialogStateQueue.map(item => item.state).join(', ');
+                console.log(`Dialog queue: [${queueInfo}], holding: ${lastSignificantState} for ${stateHoldDuration} more frames`);
+            }
         }
 
         // Auto-scroll function for event containers
@@ -622,7 +678,7 @@
                 <div><strong>${eventType.toUpperCase()}</strong></div>
                 <div class="event-time">${timestamp}</div>
             `;
-            ipuEventsList.appendChild(eventItem); // Changed to appendChild for chronological order
+            ipuEventsList.appendChild(eventItem);
             
             // Keep only last 50 events
             while (ipuEventsList.children.length > 50) {
@@ -635,23 +691,26 @@
 
         // Add event to dialog state events list (append to bottom, chronological order)
         function addDialogEvent(dialogState, timestamp) {
+            // Don't add "no_decision" to the event log
+            if (dialogState === 'no_decision') {
+                return;
+            }
+            
             const eventItem = document.createElement('div');
             eventItem.className = `event-item event-${dialogState}`;
             
-            // Get human-readable dialog state names
+            // Get human-readable dialog state names for simplified system
             const stateNames = {
                 'dialog_sl': 'START LISTEN',
                 'dialog_cl': 'CONTINUE LISTEN',
-                'dialog_el': 'END LISTEN',
-                'dialog_ss': 'START SPEAK',
-                'dialog_cs': 'CONTINUE SPEAK'
+                'dialog_ss': 'START SPEAK'
             };
             
             eventItem.innerHTML = `
                 <div><strong>${stateNames[dialogState] || dialogState.toUpperCase()}</strong></div>
                 <div class="event-time">${timestamp}</div>
             `;
-            dialogEventsList.appendChild(eventItem); // Changed to appendChild for chronological order
+            dialogEventsList.appendChild(eventItem);
             
             // Keep only last 50 events
             while (dialogEventsList.children.length > 50) {
@@ -671,7 +730,7 @@
                 <div class="event-time">${timestamp}</div>
                 <div style="margin-top: 5px; font-size: 11px;">${contextInfo}</div>
             `;
-            callbackEventsList.appendChild(eventItem); // Changed to appendChild for chronological order
+            callbackEventsList.appendChild(eventItem);
             
             // Keep only last 20 events
             while (callbackEventsList.children.length > 20) {
@@ -797,7 +856,10 @@
                 const previousDialogState = currentDialogState;
                 currentDialogState = data.dialog_state;
                 
-                // Add to dialog state event log if state changed
+                // Add significant states to the queue for timeline preservation
+                addToDialogStateQueue(currentDialogState);
+                
+                // Add to dialog state event log if state changed (excluding no_decision)
                 if (previousDialogState !== currentDialogState) {
                     const timestamp = new Date().toLocaleTimeString();
                     addDialogEvent(currentDialogState, timestamp);
