@@ -286,6 +286,7 @@ def send_pcm(sid):
             connected_users[sid][1].stop_generate = True
             connected_users[sid][1].stop_tts = True
             break
+        
         time.sleep(0.01)
         e = connected_users[sid][1].pcm_fifo_queue.get(chunk_szie)#One audio chunk
         if e is None:
@@ -378,7 +379,7 @@ def handle_connect():
     sid = request.sid
     connected_users[sid] = []
     connected_users[sid].append(Timer(TIMEOUT, disconnect_user, [sid]))
-    connected_users[sid].append(GlobalParams(tts_pool, pipeline_pool))
+    connected_users[sid].append(GlobalParams(tts_pool, pipeline_pool))##This is why subsequently we retrieve the generate_outputs from the [1] index of the connected_users[sid] list
     connected_users[sid][0].start()
     pcm_thread = threading.Thread(target=send_pcm, args=(sid,))
     pcm_thread.start()

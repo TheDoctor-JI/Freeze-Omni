@@ -1,0 +1,838 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FreezeOmni Dialog State Monitor</title>
+    <script src="https://unpkg.com/socket.io-client@4.8.1/dist/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background-color: #f0f0f0;
+            padding: 20px;
+        }
+        .main-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+        .content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            padding: 20px;
+        }
+        .left-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        .right-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+        .control-section {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid #dee2e6;
+        }
+        .waveform-section {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid #dee2e6;
+        }
+        .status-section {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #dee2e6;
+        }
+        .timeline-section {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #dee2e6;
+            height: 200px;
+        }
+        .ipu-events-section {
+            background: #fff3cd;
+            border-radius: 8px;
+            border: 1px solid #ffeaa7;
+            height: 250px;
+            display: flex;
+            flex-direction: column;
+        }
+        .dialog-events-section {
+            background: #d1ecf1;
+            border-radius: 8px;
+            border: 1px solid #bee5eb;
+            height: 250px;
+            display: flex;
+            flex-direction: column;
+        }
+        .callback-events-section {
+            background: #f8d7da;
+            border-radius: 8px;
+            border: 1px solid #f5c6cb;
+            height: 200px;
+            display: flex;
+            flex-direction: column;
+        }
+        .event-section-header {
+            padding: 15px 15px 10px 15px;
+            border-bottom: 1px solid rgba(0,0,0,0.1);
+            background: rgba(255,255,255,0.8);
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+        .event-section-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px 15px 15px 15px;
+        }
+        canvas {
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        .chart-container {
+            position: relative;
+            height: 150px;
+            margin: 10px 0;
+        }
+        button {
+            margin: 5px;
+            padding: 12px 24px;
+            font-size: 16px;
+            cursor: pointer;
+            border: none;
+            border-radius: 6px;
+            transition: all 0.3s ease;
+        }
+        .start-btn {
+            background: #28a745;
+            color: white;
+        }
+        .start-btn:hover {
+            background: #218838;
+        }
+        .stop-btn {
+            background: #dc3545;
+            color: white;
+        }
+        .stop-btn:hover {
+            background: #c82333;
+        }
+        .stop-btn:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+        }
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+        .status-active {
+            background: #28a745;
+            box-shadow: 0 0 5px #28a745;
+        }
+        .status-inactive {
+            background: #6c757d;
+        }
+        .status-generating {
+            background: #ffc107;
+            box-shadow: 0 0 5px #ffc107;
+        }
+        .dialog-state {
+            padding: 8px 12px;
+            border-radius: 20px;
+            font-weight: bold;
+            text-align: center;
+            margin: 5px 0;
+        }
+        .state-dialog_sl {
+            background: #d4edda;
+            color: #155724;
+        }
+        .state-dialog_cl {
+            background: #cce5ff;
+            color: #004085;
+        }
+        .state-dialog_el {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        .state-dialog_ss {
+            background: #fff3cd;
+            color: #856404;
+        }
+        .state-dialog_cs {
+            background: #e2e3e5;
+            color: #383d41;
+        }
+        .alert {
+            display: none;
+            margin-top: 20px;
+            padding: 10px;
+            background-color: #f44336;
+            color: white;
+            border-radius: 5px;
+        }
+        .success-alert {
+            background-color: #28a745;
+        }
+        .text-input-container {
+            margin-top: 15px;
+        }
+        .text-input-container textarea {
+            padding: 10px;
+            font-size: 14px;
+            width: 100%;
+            height: 100px;
+            margin-bottom: 10px;
+            resize: vertical;
+            border: 1px solid #ced4da;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        .prompt-btn {
+            background: #17a2b8;
+            color: white;
+        }
+        .prompt-btn:hover {
+            background: #138496;
+        }
+        h2 {
+            margin: 0;
+            color: #495057;
+            font-size: 18px;
+        }
+        h3 {
+            margin-top: 0;
+            color: #6c757d;
+            font-size: 14px;
+            font-weight: normal;
+        }
+        .status-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin: 10px 0;
+        }
+        .status-item {
+            display: flex;
+            align-items: center;
+            padding: 8px;
+            background: white;
+            border-radius: 4px;
+            border: 1px solid #e9ecef;
+        }
+        .event-item {
+            padding: 8px;
+            margin: 5px 0;
+            background: white;
+            border-radius: 4px;
+            border-left: 4px solid;
+            font-size: 12px;
+        }
+        .event-ipu_sl {
+            border-left-color: #28a745;
+        }
+        .event-ipu_cl {
+            border-left-color: #007bff;
+        }
+        .event-ipu_el {
+            border-left-color: #dc3545;
+        }
+        .event-dialog_sl {
+            border-left-color: #28a745;
+        }
+        .event-dialog_cl {
+            border-left-color: #007bff;
+        }
+        .event-dialog_el {
+            border-left-color: #dc3545;
+        }
+        .event-dialog_ss {
+            border-left-color: #ffc107;
+        }
+        .event-dialog_cs {
+            border-left-color: #6c757d;
+        }
+        .event-time {
+            color: #6c757d;
+            font-size: 10px;
+        }
+        .disabled-notice {
+            background: #e9ecef;
+            padding: 10px;
+            border-radius: 4px;
+            text-align: center;
+            color: #6c757d;
+            font-style: italic;
+        }
+        /* Auto-scroll styling */
+        .auto-scroll {
+            scroll-behavior: smooth;
+        }
+        .event-logs-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-top: 15px;
+        }
+    </style>
+</head>
+<body>
+    <div class="main-container">
+        <div class="header">
+            <h1>FreezeOmni Dialog State Monitor</h1>
+            <p>Real-time Dialog State Prediction Monitoring</p>
+        </div>
+        
+        <div class="content">
+            <div class="left-panel">
+                <!-- Control Section -->
+                <div class="control-section">
+                    <h2>Control Panel</h2>
+                    <button id="startButton" class="start-btn">Start Monitoring</button>
+                    <button id="stopButton" class="stop-btn" disabled>Stop Monitoring</button>
+                    
+                    <div class="text-input-container">
+                        <textarea id="textInput" placeholder="Write prompt here and click 'Set Prompt', then restart interaction."></textarea>
+                        <button id="sendTextButton" class="prompt-btn">Set Prompt</button>
+                    </div>
+                </div>
+
+                <!-- Waveform Section -->
+                <div class="waveform-section">
+                    <h2>Audio Waveforms</h2>
+                    <h3>Input Waveform</h3>
+                    <canvas id="inputCanvas" width="500" height="80"></canvas>
+                    <h3>Output Waveform (Disabled)</h3>
+                    <div class="disabled-notice">Audio output disabled in dialog state monitoring mode</div>
+                    <canvas id="outputCanvas" width="500" height="80" style="opacity: 0.3;"></canvas>
+                </div>
+
+                <!-- Event Logs Container -->
+                <div class="event-logs-container">
+                    <!-- IPU Events Log -->
+                    <div class="ipu-events-section">
+                        <div class="event-section-header">
+                            <h2>IPU Events Log</h2>
+                        </div>
+                        <div class="event-section-content auto-scroll" id="ipuEventsContainer">
+                            <div id="ipuEventsList"></div>
+                        </div>
+                    </div>
+
+                    <!-- Dialog State Events Log -->
+                    <div class="dialog-events-section">
+                        <div class="event-section-header">
+                            <h2>Dialog State Events</h2>
+                        </div>
+                        <div class="event-section-content auto-scroll" id="dialogEventsContainer">
+                            <div id="dialogEventsList"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="right-panel">
+                <!-- Current Status Section -->
+                <div class="status-section">
+                    <h2>Current System Status</h2>
+                    <div class="status-grid">
+                        <div class="status-item">
+                            <span class="status-indicator" id="vadIndicator"></span>
+                            <span>VAD State: <strong id="vadStatus">False</strong></span>
+                        </div>
+                        <div class="status-item">
+                            <span class="status-indicator" id="genIndicator"></span>
+                            <span>Dialog SS: <strong id="genStatus">False</strong></span>
+                        </div>
+                    </div>
+                    <div class="dialog-state" id="dialogState">dialog_sl</div>
+                </div>
+
+                <!-- Timeline: VAD State -->
+                <div class="timeline-section">
+                    <h2>VAD State Timeline (10s)</h2>
+                    <div class="chart-container">
+                        <canvas id="vadChart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Timeline: Dialog State -->
+                <div class="timeline-section">
+                    <h2>Dialog State Timeline (10s)</h2>
+                    <div class="chart-container">
+                        <canvas id="dialogChart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Dialog SS Callbacks Log -->
+                <div class="callback-events-section">
+                    <div class="event-section-header">
+                        <h2>Dialog SS Callbacks</h2>
+                    </div>
+                    <div class="event-section-content auto-scroll" id="callbackEventsContainer">
+                        <div id="callbackEventsList"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="alertBox" class="alert">Too many users connected. Please refresh and try again.</div>
+        <div id="alertBox2" class="alert">Connect time out. Please refresh and reconnect.</div>
+        <div id="alertBox3" class="alert success-alert">Prompt set success. Please restart interaction.</div>
+    </div>
+
+    <script>
+        // Audio elements and controls
+        const startButton = document.getElementById('startButton');
+        const stopButton = document.getElementById('stopButton');
+        const inputCanvas = document.getElementById('inputCanvas');
+        const outputCanvas = document.getElementById('outputCanvas');
+        const inputCtx = inputCanvas.getContext('2d');
+        const outputCtx = outputCanvas.getContext('2d');
+        const textInput = document.getElementById('textInput');
+        const sendTextButton = document.getElementById('sendTextButton');
+
+        // Status elements
+        const vadIndicator = document.getElementById('vadIndicator');
+        const genIndicator = document.getElementById('genIndicator');
+        const vadStatus = document.getElementById('vadStatus');
+        const genStatus = document.getElementById('genStatus');
+        const dialogState = document.getElementById('dialogState');
+
+        // Event lists and containers
+        const ipuEventsList = document.getElementById('ipuEventsList');
+        const dialogEventsList = document.getElementById('dialogEventsList');
+        const callbackEventsList = document.getElementById('callbackEventsList');
+        const ipuEventsContainer = document.getElementById('ipuEventsContainer');
+        const dialogEventsContainer = document.getElementById('dialogEventsContainer');
+        const callbackEventsContainer = document.getElementById('callbackEventsContainer');
+
+        // Alert elements
+        const alertBox = document.getElementById('alertBox');
+        const alertBox2 = document.getElementById('alertBox2');
+        const alertBox3 = document.getElementById('alertBox3');
+
+        const socket = io();
+
+        let localStream;
+        let audioContext;
+        let processor;
+        let isRecording = false;
+        const fixedSampleRate = 16000;
+
+        // Timeline data storage (10 seconds at 100ms intervals = 100 data points)
+        const timelineLength = 100;
+        let vadTimeline = new Array(timelineLength).fill(false);
+        let dialogTimeline = new Array(timelineLength).fill('dialog_sl');
+
+        // Current state tracking
+        let currentVadState = false;
+        let currentDialogState = 'dialog_sl';
+        let dialogSSTriggered = false;
+
+        // Chart.js instances
+        let vadChart, dialogChart;
+
+        // Initialize charts
+        function initializeCharts() {
+            // VAD Chart
+            const vadCtx = document.getElementById('vadChart').getContext('2d');
+            vadChart = new Chart(vadCtx, {
+                type: 'bar',
+                data: {
+                    labels: new Array(timelineLength).fill('').map((_, i) => `${(timelineLength - i) * 0.1}s`),
+                    datasets: [{
+                        label: 'VAD Active',
+                        data: vadTimeline,
+                        backgroundColor: vadTimeline.map(val => val ? '#28a745' : '#e9ecef'),
+                        borderWidth: 0
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            max: 1,
+                            ticks: {
+                                stepSize: 1,
+                                callback: function(value) {
+                                    return value ? 'Active' : 'Inactive';
+                                }
+                            }
+                        },
+                        x: {
+                            display: false
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            display: true,
+                            position: 'top'
+                        }
+                    }
+                }
+            });
+
+            // Dialog State Chart
+            const dialogCtx = document.getElementById('dialogChart').getContext('2d');
+            const stateColors = {
+                'dialog_sl': '#d4edda',
+                'dialog_cl': '#cce5ff', 
+                'dialog_el': '#f8d7da',
+                'dialog_ss': '#fff3cd',
+                'dialog_cs': '#e2e3e5'
+            };
+
+            dialogChart = new Chart(dialogCtx, {
+                type: 'bar',
+                data: {
+                    labels: new Array(timelineLength).fill('').map((_, i) => `${(timelineLength - i) * 0.1}s`),
+                    datasets: [{
+                        label: 'Start Listen',
+                        data: dialogTimeline.map(state => state === 'dialog_sl' ? 5 : 0),
+                        backgroundColor: stateColors['dialog_sl'],
+                        borderWidth: 0
+                    }, {
+                        label: 'Continue Listen',
+                        data: dialogTimeline.map(state => state === 'dialog_cl' ? 4 : 0),
+                        backgroundColor: stateColors['dialog_cl'],
+                        borderWidth: 0
+                    }, {
+                        label: 'End Listen',
+                        data: dialogTimeline.map(state => state === 'dialog_el' ? 3 : 0),
+                        backgroundColor: stateColors['dialog_el'],
+                        borderWidth: 0
+                    }, {
+                        label: 'Start Speak',
+                        data: dialogTimeline.map(state => state === 'dialog_ss' ? 2 : 0),
+                        backgroundColor: stateColors['dialog_ss'],
+                        borderWidth: 0
+                    }, {
+                        label: 'Continue Speak',
+                        data: dialogTimeline.map(state => state === 'dialog_cs' ? 1 : 0),
+                        backgroundColor: stateColors['dialog_cs'],
+                        borderWidth: 0
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            stacked: true,
+                            display: false
+                        },
+                        y: {
+                            stacked: true,
+                            beginAtZero: true,
+                            max: 5,
+                            ticks: {
+                                stepSize: 1,
+                                callback: function(value) {
+                                    const states = ['', 'CS', 'SS', 'EL', 'CL', 'SL'];
+                                    return states[value] || '';
+                                }
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            display: true,
+                            position: 'top'
+                        }
+                    }
+                }
+            });
+        }
+
+        // Update timeline data
+        function updateTimeline() {
+            // Shift arrays left and add new data
+            vadTimeline.shift();
+            vadTimeline.push(currentVadState);
+            
+            dialogTimeline.shift();
+            dialogTimeline.push(currentDialogState);
+
+            // Update chart data
+            vadChart.data.datasets[0].data = [...vadTimeline];
+            vadChart.data.datasets[0].backgroundColor = vadTimeline.map(val => val ? '#28a745' : '#e9ecef');
+            vadChart.update('none');
+
+            // Update dialog chart datasets
+            dialogChart.data.datasets[0].data = dialogTimeline.map(state => state === 'dialog_sl' ? 5 : 0);
+            dialogChart.data.datasets[1].data = dialogTimeline.map(state => state === 'dialog_cl' ? 4 : 0);
+            dialogChart.data.datasets[2].data = dialogTimeline.map(state => state === 'dialog_el' ? 3 : 0);
+            dialogChart.data.datasets[3].data = dialogTimeline.map(state => state === 'dialog_ss' ? 2 : 0);
+            dialogChart.data.datasets[4].data = dialogTimeline.map(state => state === 'dialog_cs' ? 1 : 0);
+            dialogChart.update('none');
+        }
+
+        // Update status displays
+        function updateStatusDisplay() {
+            // VAD status
+            vadStatus.textContent = currentVadState ? 'True' : 'False';
+            vadIndicator.className = `status-indicator ${currentVadState ? 'status-active' : 'status-inactive'}`;
+
+            // Dialog SS status (renamed from "Generating")
+            genStatus.textContent = dialogSSTriggered ? 'Triggered' : 'False';
+            genIndicator.className = `status-indicator ${dialogSSTriggered ? 'status-generating' : 'status-inactive'}`;
+
+            // Dialog state
+            dialogState.textContent = currentDialogState;
+            dialogState.className = `dialog-state state-${currentDialogState}`;
+        }
+
+        // Auto-scroll function for event containers
+        function scrollToBottom(container) {
+            container.scrollTop = container.scrollHeight;
+        }
+
+        // Add event to IPU events list (append to bottom, chronological order)
+        function addIPUEvent(eventType, timestamp) {
+            const eventItem = document.createElement('div');
+            eventItem.className = `event-item event-${eventType}`;
+            eventItem.innerHTML = `
+                <div><strong>${eventType.toUpperCase()}</strong></div>
+                <div class="event-time">${timestamp}</div>
+            `;
+            ipuEventsList.appendChild(eventItem); // Changed to appendChild for chronological order
+            
+            // Keep only last 50 events
+            while (ipuEventsList.children.length > 50) {
+                ipuEventsList.removeChild(ipuEventsList.firstChild);
+            }
+            
+            // Auto-scroll to bottom to show latest event
+            setTimeout(() => scrollToBottom(ipuEventsContainer), 10);
+        }
+
+        // Add event to dialog state events list (append to bottom, chronological order)
+        function addDialogEvent(dialogState, timestamp) {
+            const eventItem = document.createElement('div');
+            eventItem.className = `event-item event-${dialogState}`;
+            
+            // Get human-readable dialog state names
+            const stateNames = {
+                'dialog_sl': 'START LISTEN',
+                'dialog_cl': 'CONTINUE LISTEN',
+                'dialog_el': 'END LISTEN',
+                'dialog_ss': 'START SPEAK',
+                'dialog_cs': 'CONTINUE SPEAK'
+            };
+            
+            eventItem.innerHTML = `
+                <div><strong>${stateNames[dialogState] || dialogState.toUpperCase()}</strong></div>
+                <div class="event-time">${timestamp}</div>
+            `;
+            dialogEventsList.appendChild(eventItem); // Changed to appendChild for chronological order
+            
+            // Keep only last 50 events
+            while (dialogEventsList.children.length > 50) {
+                dialogEventsList.removeChild(dialogEventsList.firstChild);
+            }
+            
+            // Auto-scroll to bottom to show latest event
+            setTimeout(() => scrollToBottom(dialogEventsContainer), 10);
+        }
+
+        // Add event to dialog SS callbacks list (append to bottom, chronological order)
+        function addCallbackEvent(timestamp, contextInfo) {
+            const eventItem = document.createElement('div');
+            eventItem.className = 'event-item event-dialog_ss';
+            eventItem.innerHTML = `
+                <div><strong>DIALOG_SS CALLBACK</strong></div>
+                <div class="event-time">${timestamp}</div>
+                <div style="margin-top: 5px; font-size: 11px;">${contextInfo}</div>
+            `;
+            callbackEventsList.appendChild(eventItem); // Changed to appendChild for chronological order
+            
+            // Keep only last 20 events
+            while (callbackEventsList.children.length > 20) {
+                callbackEventsList.removeChild(callbackEventsList.firstChild);
+            }
+            
+            // Auto-scroll to bottom to show latest event
+            setTimeout(() => scrollToBottom(callbackEventsContainer), 10);
+        }
+
+        // Event listeners
+        startButton.addEventListener('click', startRecording);
+        stopButton.addEventListener('click', stopRecording);
+        sendTextButton.addEventListener('click', sendText);
+
+        // Initialize charts when page loads
+        window.addEventListener('load', () => {
+            initializeCharts();
+            updateStatusDisplay(); // Initialize display
+            // Update timeline every 100ms
+            setInterval(updateTimeline, 100);
+        });
+
+        async function startRecording() {
+            if (audioContext) {
+                audioContext.close();
+            }
+            if (processor) {
+                processor.disconnect();
+            }
+
+            localStream = await navigator.mediaDevices.getUserMedia({ 
+                audio: {
+                    autoGainControl: false, 
+                    echoCancellation: true, 
+                    noiseSuppression: false, 
+                    latency: 0.001
+                } 
+            });
+
+            audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: fixedSampleRate });
+            const input = audioContext.createMediaStreamSource(localStream);
+            processor = audioContext.createScriptProcessor(256, 1, 1);
+
+            processor.onaudioprocess = (e) => {
+                if (!isRecording) return;
+
+                const inputData = e.inputBuffer.getChannelData(0);
+
+                const int16Array = new Int16Array(inputData.length);
+                for (let i = 0; i < inputData.length; i++) {
+                    int16Array[i] = inputData[i] * 0x7FFF;
+                }
+                socket.emit('audio', JSON.stringify({ 
+                    sample_rate: audioContext.sampleRate, 
+                    audio: Array.from(new Uint8Array(int16Array.buffer)) 
+                }));
+                drawWaveform(inputData, inputCtx);
+            };
+
+            input.connect(processor);
+            processor.connect(audioContext.destination);
+
+            isRecording = true;
+            startButton.disabled = true;
+            stopButton.disabled = false;
+
+            socket.emit('recording-started');
+        }
+
+        function stopRecording() {
+            isRecording = false;
+            localStream.getTracks().forEach(track => track.stop());
+            startButton.disabled = false;
+            stopButton.disabled = true;
+
+            socket.emit('recording-stopped');
+        }
+
+        function sendText() {
+            const text = textInput.value;
+            if (text.trim() !== "") {
+                socket.emit('prompt_text', text);
+            }
+        }
+
+        function drawWaveform(data, context) {
+            context.clearRect(0, 0, context.canvas.width, context.canvas.height);
+            context.beginPath();
+            context.moveTo(0, context.canvas.height / 2);
+            context.strokeStyle = '#007bff';
+            context.lineWidth = 1;
+            for (let i = 0; i < data.length; i++) {
+                const x = (i / data.length) * context.canvas.width;
+                const y = (1 - data[i]) * context.canvas.height / 2;
+                context.lineTo(x, y);
+            }
+            context.stroke();
+        }
+
+        // Socket event handlers
+        socket.on('too_many_users', (data) => {
+            alertBox.style.display = 'block';
+            setTimeout(() => alertBox.style.display = 'none', 5000);
+        });
+
+        socket.on('out_time', (data) => {
+            alertBox2.style.display = 'block';
+            setTimeout(() => alertBox2.style.display = 'none', 5000);
+        });
+
+        socket.on('prompt_success', (data) => {
+            alertBox3.style.display = 'block';
+            setTimeout(() => alertBox3.style.display = 'none', 3000);
+        });
+
+        // Socket events for state updates
+        socket.on('state_update', (data) => {
+            if (data.vad_state !== undefined) {
+                currentVadState = data.vad_state;
+            }
+            if (data.dialog_state !== undefined) {
+                const previousDialogState = currentDialogState;
+                currentDialogState = data.dialog_state;
+                
+                // Add to dialog state event log if state changed
+                if (previousDialogState !== currentDialogState) {
+                    const timestamp = new Date().toLocaleTimeString();
+                    addDialogEvent(currentDialogState, timestamp);
+                }
+                
+                // Reset dialog SS trigger when state changes from dialog_ss
+                if (currentDialogState !== 'dialog_ss') {
+                    dialogSSTriggered = false;
+                }
+            }
+            updateStatusDisplay();
+        });
+
+        // Socket events for IPU events
+        socket.on('ipu_event', (data) => {
+            const timestamp = new Date().toLocaleTimeString();
+            addIPUEvent(data.event_type, timestamp);
+        });
+
+        // Socket events for dialog SS callbacks
+        socket.on('dialog_ss_callback', (data) => {
+            const timestamp = new Date().toLocaleTimeString();
+            dialogSSTriggered = true;
+            updateStatusDisplay();
+            addCallbackEvent(timestamp, data.context_info || 'External LLM integration point');
+        });
+
+        // Clear output waveform (disabled in this mode)
+        outputCtx.clearRect(0, 0, outputCanvas.width, outputCanvas.height);
+        outputCtx.fillStyle = '#e9ecef';
+        outputCtx.fillRect(0, 0, outputCanvas.width, outputCanvas.height);
+        outputCtx.fillStyle = '#6c757d';
+        outputCtx.font = '14px Arial';
+        outputCtx.textAlign = 'center';
+        outputCtx.fillText('Audio Output Disabled', outputCanvas.width/2, outputCanvas.height/2);
+    </script>
+</body>
+</html>
