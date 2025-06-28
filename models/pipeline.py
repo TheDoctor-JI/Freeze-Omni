@@ -23,7 +23,7 @@ class inferencePipeline():
         self.model.eval()
 
     def speech_dialogue(self, 
-                        audio: tuple, #Audio features from one audio chunk
+                        audio: tuple, #Audio features
                         role: str=None, #system's role
                         stat: str='dialog_sl', #current dialogue state
                         past_key_values=None, #LLM's memory (context, what has been said before)
@@ -69,7 +69,8 @@ class inferencePipeline():
                                 feats,
                                 feats_lengths,
                                 extra_inputs=extra_inputs)
-            
+
+            ## This now contains the updated state: the updated past_key_values, as well as the forward pass outputs, i.e., either the stat or the last_id.
             outputs = dict(
                 past_key_values=past_key_values,
                 stat=stat,
@@ -80,8 +81,7 @@ class inferencePipeline():
             )
 
             if stat == 'dialog_cs':
-            # if stat == 'cs':
-                ## The recognize pass in this case outputs the next text tokenwhich can then be used for TTS
+                ## The recognize pass in this case outputs the next text token which can then be used for TTS
                 if past_tokens is None:
                     past_tokens = []
                 past_tokens.append(last_id[0][0])

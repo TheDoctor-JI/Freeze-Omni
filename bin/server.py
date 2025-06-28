@@ -138,6 +138,7 @@ def generate(outputs, sid):
     connected_users[sid][1].is_generate = True
     emit_state_update(sid, generating=True)
 
+    ## Note that the audio input is set as None, consistent with the bifurcation of the context: during the generation thread we do not receive any new audio input from the user
     outputs = connected_users[sid][1].pipeline_obj.pipeline_proc.speech_dialogue(None, **outputs)
     connected_users[sid][1].generate_outputs = deepcopy(outputs)
 
@@ -160,6 +161,7 @@ def generate(outputs, sid):
             break
         del outputs['text']
         del outputs['hidden_state']
+        ## Note that the audio input is set as None, consistent with the bifurcation of the context: during the generation thread we do not receive any new audio input from the user
         outputs = connected_users[sid][1].pipeline_obj.pipeline_proc.speech_dialogue(None, **outputs)
         connected_users[sid][1].generate_outputs = deepcopy(outputs)
         emit_state_update(sid, dialog_state=outputs.get('stat'))
@@ -223,7 +225,7 @@ def llm_prefill(data, outputs, sid, is_first_pack=False):
         ## Note: ("auto" really is "hopefully", because this is subject to model decision. It's just that most likely for the first chunk, the model will decide to continue listening. There is no special mechanism here.)
         ## Note 2: very importantly, this can occur WHILE a generation thread is running. If the model subsequently predict another 'ss' from this new IPU, then the ongoing generation if any, will be dropped. And a new generation will be triggered.
         outputs = connected_users[sid][1].pipeline_obj.pipeline_proc.speech_dialogue(
-                                                                     torch.tensor(data['feature']), 
+                                                                     torch.tensor(data['feature']),#Audio part
                                                                      **outputs)
         emit_state_update(sid, dialog_state=outputs.get('stat'))
     
@@ -241,7 +243,7 @@ def llm_prefill(data, outputs, sid, is_first_pack=False):
             # Stage2: continue listen
             # stat will be auto set to 'dialog_ss' when endpoint is detected
             outputs = connected_users[sid][1].pipeline_obj.pipeline_proc.speech_dialogue(
-                                                                         torch.tensor(data['feature']), 
+                                                                         torch.tensor(data['feature']),#Audio part
                                                                          **outputs)
             emit_state_update(sid, dialog_state=outputs.get('stat'))
 
@@ -250,7 +252,7 @@ def llm_prefill(data, outputs, sid, is_first_pack=False):
             outputs['stat'] = 'dialog_cl'
             emit_state_update(sid, dialog_state=outputs.get('stat'))
 
-        if outputs['stat'] == 'dialog_el':## If the model decides that it will stop listening
+        if outputs['stat'] == 'dialog_el':## If the model has decided that it will stop listening, then this chunk will not be processed
             connected_users[sid][1].wakeup_and_vad.in_dialog = False #LLM decision causes active reset of the VAD state
             emit_state_update(sid, vad_state=False)
             print("Sid: ", sid, " Detect invalid break")
@@ -260,7 +262,8 @@ def llm_prefill(data, outputs, sid, is_first_pack=False):
             print("Sid: ", sid, " Detect break")
             connected_users[sid][1].wakeup_and_vad.in_dialog = False #LLM decision causes active reset of the VAD state
             emit_state_update(sid, vad_state=False)
-            ##We stop feeding in user audio chunk and run a separate generate thread to generate the output
+            ##Run a separate generate thread to generate the output
+            ##Note that here we make a deepcopy of the outputs, so the generate thread sees the same outputs as the current thread, but will not see subseuqnet changes to the outputs, in particular it will not see new human audio chunks
             generate_thread = threading.Thread(target=generate, args=(deepcopy(outputs), sid))
             generate_thread.start()
 
@@ -298,6 +301,14 @@ def send_pcm(sid):
         if res['status'] == 'ipu_sl':
             print("Sid: ", sid, " Vad start")
             emit_state_update(sid, vad_state=True)
+            ## (1) At the onset of human utterances, make a snapshot of the converstion up till this point.
+            ## This snapshot will include both what the user has said before, and what the system has generated up till this point (note that the generation is faster than realtime, so not all that is generated is necessarily played out yet)
+            ## Subsequently, for this IPU, we aggregate things over the locally maintained outputs variable.
+            ## (2) Importantly, this is the only place where this send_pcm function read the shared memory (generate_outputs). Subsequently, when processing and predicting dialog state for this human IPU, no new system-generated tokens will be took into account. This is sensible when you think about interruption: when I interrupt I'm usually resoinding to what I have heard so far. But again, as described above, there is a mismatch between physical playback and LLM decoding. And it also makes the subsequent application of the chat template a lot easire, because no overlap is present.
+            ## (3) The fact that this is the only place where the shared memory is accessed creates a memory loss issue if the dialog state prediction outputs dialog_el. Let's suppose we are in a human IPU, I_1. At the onset of I_1, the send pcm function will read the shared memory, let's say its state is S_1. Since the dialog_state prediction never writes to the shared memory and always read from it unconditionally, if the dialog predict dialog_el in response to I_1, then no generation thread is spawned, consequently nothing is written to the shared memory -- the shared memory stays at S_1. Subsequently, if there is another human IPU I_2 occurred, the send_pcm function will read from the shared memory again, which is still S_1 -- I_1 is completely forgotten.
+            ## (4) Similarly, if I_1 occurs while the system is generating things and the dialog_state prediction decides not to trigger a new generation thread, then the write operate of the ongoing generation thread will overrite the shared memory everytime it decodes a new token, thereby causing I_1 to be forgotten.
+            ## (5) So I guess it's safe to say that, although freeze-omni can respond to both interruptions and pauses in human utterances, it does not do either ideally. In both cases, human utterances that do not trigger new response generation are lost. On top of that, due to the aforementioned mismatch between physical time and generation time, the context used for handling human interruption can be inconsistent with reality.
+
             outputs = deepcopy(connected_users[sid][1].generate_outputs)
             outputs['adapter_cache'] = None
             outputs['encoder_cache'] = None
@@ -326,10 +337,13 @@ def send_pcm(sid):
 
         ## For subsequent chunks, just throw them into the LLM
         elif res['status'] == 'ipu_cl' or res['status'] == 'ipu_el':
+            ## Note that the outputs field are NOT updated before calling llm_prefill here. Instead llm_prefill will integrate the new audio chunks into the output field.
+            ## Importantly,since the send_pcm and llm_prefill calls NEVER write to the shared memory except through the generation_thread.
             send_dict = {}
             send_dict['status'] = res['status']
             send_dict['feature'] = res['feature']
             outputs = llm_prefill(send_dict, outputs, sid)
+
 
 def disconnect_user(sid):
     if sid in connected_users:

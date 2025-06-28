@@ -58,7 +58,7 @@ class GlobalParams:
         self.stop_generate = False
         self.is_generate = False
         self.wakeup_and_vad.in_dialog = False
-        self.generate_outputs = deepcopy(self.system_role)
+        self.generate_outputs = deepcopy(self.system_role)#Initially or upon reset, only contains a system prompt
         self.whole_text = ""
 
         self.tts_over = False

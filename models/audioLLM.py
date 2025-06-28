@@ -251,6 +251,7 @@ class AudioLLM(torch.nn.Module):
         speech_lengths: torch.Tensor,
         extra_inputs: Optional[dict] = None,
     ):
+        ## At the beginning, past_key_values will only contain system role/prompt
         assert extra_inputs.get('past_key_values', None) is not None, "must set system role first!!!"
 
         buffer = extra_inputs.get('encoder_cache', None)
@@ -276,6 +277,9 @@ class AudioLLM(torch.nn.Module):
 
             attention_mask = encoder_mask.squeeze(1) # 1, T
 
+            ## If the state is listening to user input, we use the adapter-encoder pipeline to create input embeddings from audio inputs
+
+
         # prompt
         if extra_inputs['stat'] == 'dialog_sl':
             if self.prompt_finetune:
@@ -291,6 +295,7 @@ class AudioLLM(torch.nn.Module):
 
         # chat mode
         if self.chat_template is not None:
+            ## Apply chat template. In listening state, the user input grows. In speaking state, the system decoded tokens grows. Different template (special tokens) are used to segregate user input and system decoded tokens which get input to the model autoregressively.
             if extra_inputs['stat'] == 'dialog_sl':
                 chat_prefix = self.chat_template['prefix'].to(
                                                     inputs_embeds.device)
@@ -302,26 +307,26 @@ class AudioLLM(torch.nn.Module):
                 inputs_embeds = torch.cat((chat_prefix_embeds, inputs_embeds), 1)
                 attention_mask = torch.cat((chat_prefix_mask, attention_mask), 1)
             if extra_inputs['stat'] == 'dialog_ss':
-            # if extra_inputs['stat'] == 'ss':
                 chat_suffix = self.chat_template['suffix'].to('cuda')
                 chat_suffix_embeds = self.llm_decoder.transformer.wte(chat_suffix)
                 chat_suffix_mask = torch.full(chat_suffix.shape, True).to('cuda')
                 inputs_embeds = chat_suffix_embeds
                 attention_mask = chat_suffix_mask
         
-        if extra_inputs['stat'] != 'dialog_cs':
+        ## The form of input differs depending on what input signal we have (what state we are in).
+        if extra_inputs['stat'] != 'dialog_cs':#If system is not speaking, then the input should be input embeddings from user audio
             inputs = {
                 'inputs_embeds': inputs_embeds.half(),
                 'attention_mask': attention_mask,
             }
-        else:
+        else:# If system is speaking, then the input should be the last token id decoded by the model
             attention_mask = torch.full([1, 1], True).to('cuda')
             inputs = {
                 'input_ids': extra_inputs['last_id'],
                 'attention_mask': attention_mask
             }
 
-        # add kv cache
+        # add kv cache, i.e., context from previous steps integrating both user input and system output
         inputs['past_key_values'] = extra_inputs['past_key_values']
         past_mask = torch.full([1, inputs['past_key_values'][0][0].size(2)],
                                 True).to('cuda')
@@ -332,6 +337,7 @@ class AudioLLM(torch.nn.Module):
         top_k = extra_inputs.get('top_k', 0)
         temperature = extra_inputs.get('temperature', 1.0)
 
+        ## This is where we actually run forward inference.
         last_id, past_key_values, stat, hidden_state = self._generate_one_step(copy.deepcopy(inputs), 
                                                 extra_inputs['stat'],
                                                 top_p=top_p, 
@@ -412,8 +418,9 @@ class AudioLLM(torch.nn.Module):
         - past_key_values: The model's historical key-value pairs, used for cross-step memory.
         - hidden_state: The model's hidden state, used to maintain cross-step contextual information.
         """
+        ##Note that this forward pass automatically update the past_key_values to be the most updated, i.e., the state used in this decoding step
         outputs = self.llm_decoder.model(**inputs)
-        if stat == 'dialog_sl' or stat == 'dialog_cl':## While listening, we further use the predictor head to update dialogue state based on the last layer's hidden state output
+        if stat == 'dialog_sl' or stat == 'dialog_cl':## While listening, we further use the predictor head to update dialogue state based on the last layer's hidden state output. Note that in this case the last_id output is set to None because we do not use the projection head to generate a new token
             state_logits = self.predictor_head(
                         outputs['last_hidden_state'])[0, :]
             prob = F.softmax(state_logits[:, :-1])
