@@ -13,15 +13,15 @@ from silero_vad.utils_vad import VADIterator
 
 class VAD:
     def __init__(self, cache_history=10, silence_threshold_ms=None):
-        self.chunk_size = 16
-        self.chunk_overlap = 3
+        self.step_cnt_per_chunk = 16##How many steps for each audio chunk
+        self.step_overlap_cross_chunk = 3##How many steps from the previous audio chunk to be included in the final input feature to the LLM model
         self.feat_dim = 80
-        self.frame_size = 400
-        self.frame_shift = 160
+        self.frame_size = 400##Number of frames to be processed in each step
+        self.frame_shift = 160##Number of frames to be shifted in each step
         self.silence_threshold_ms = silence_threshold_ms
-        self.frame_overlap = self.frame_size - self.frame_shift
-        self.CHUNK = self.frame_shift * self.chunk_size
-        self.cache_history = cache_history
+        self.frame_overlap = self.frame_size - self.frame_shift##Number of overlapping frames in each step
+        self.CHUNK = self.frame_shift * self.step_cnt_per_chunk##Number of frames expected in each audio chunk
+        self.cache_history = cache_history##Number of input chunks to be cached by the VAD model
         self.in_dialog = False
 
         with torch.no_grad():
@@ -44,9 +44,9 @@ class VAD:
 
     def reset_vad(self):
         # reset all parms
-        self.input_chunk = torch.zeros([1, self.chunk_size + self.chunk_overlap, self.feat_dim])
+        self.input_chunk = torch.zeros([1, self.step_cnt_per_chunk + self.step_overlap_cross_chunk, self.feat_dim])
         self.input_sample = torch.zeros([1, self.CHUNK + self.frame_overlap , 1])
-        self.history = torch.zeros([self.cache_history, self.chunk_size + self.chunk_overlap, self.feat_dim])
+        self.history = torch.zeros([self.cache_history, self.step_cnt_per_chunk + self.step_overlap_cross_chunk, self.feat_dim])
         self.vad_iterator.reset_states()
         self.in_dialog = False
     
@@ -89,13 +89,15 @@ class VAD:
             # get fbank feature
             audio = torch.tensor(audio)
             sample_data = audio.reshape(1, -1, 1)[:, :, :1] * 32768
+            ##Compose the input audio sample for computing the fbank feature of the current audio chunk. Note that we use the last self.frame_overlap frames from the previous audio chunk as the first self.frame_overlap frames of the current audio chunk to ensure that the first step of the current audio chunk has enough frames to compute the fbank feature.
             self.input_sample[:, :self.frame_overlap , :] = self.input_sample[:, -self.frame_overlap:, :].clone()
             self.input_sample[:, self.frame_overlap:, :] = sample_data
             # compute kaldi style feature
             xs = k.fbank(waveform = self.input_sample.squeeze(-1), dither=0, 
                         frame_length=25, frame_shift=10, num_mel_bins=self.feat_dim)
-            self.input_chunk[:, :self.chunk_overlap, :] = self.input_chunk[:, -self.chunk_overlap:, :].clone()
-            self.input_chunk[:, self.chunk_overlap:, :] = xs.squeeze(0)
+            ##Compose the final input chunk corresponding to the current audio chunk. Note that we use the last self.step_overlap_cross_chunk steps from the previous input chunk as the first self.step_overlap_cross_chunk steps of the current input chunk
+            self.input_chunk[:, :self.step_overlap_cross_chunk, :] = self.input_chunk[:, -self.step_overlap_cross_chunk:, :].clone()
+            self.input_chunk[:, self.step_overlap_cross_chunk:, :] = xs.squeeze(0)
 
             # get vad status
             if self.in_dialog:
@@ -117,13 +119,13 @@ class VAD:
                     # self.vad_iterator.reset_states()
                 else:  
                     ## In this case, the chunk is labeled as None.
-                    # cache fbank feature
+                    ## cache fbank feature when not in an IPU and is not at the onset of IPU
                     self.history[:-1] = self.history[1:].clone()
                     self.history[-1:] = self.input_chunk
 
             # return dict
             if return_dict['status'] == 'ipu_sl':
-                # copy last 6 chunks
+                ##copy last 6 chunks cached. These would be chunks from outside an IPU.
                 return_dict['feature_last_chunk'] = self.history[-6:].unsqueeze(1).numpy().tolist()
                 return_dict['feature'] = self.input_chunk.numpy().tolist()
                 return_dict['history_feature'] = self.history.numpy().tolist()

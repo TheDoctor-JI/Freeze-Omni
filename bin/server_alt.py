@@ -20,11 +20,16 @@ from copy import deepcopy
 from threading import Timer
 from flask import Flask, render_template, request
 from flask_socketio import SocketIO, disconnect, emit
-
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from web.parms import GlobalParams
 from web.pool import pipelineObjectPool
 from web.pem import generate_self_signed_cert
 from web.queue import PCMQueue, ProcPCMQueue, ThreadSafeQueue
+from periphrals.PureVAD import PureVAD
+from periphrals.AudioFeatureGating import AudioFeatureGating
+
 
 def get_args():
     parser = argparse.ArgumentParser(description='Freeze-Omni Dialog State Server')
@@ -69,69 +74,35 @@ socketio = SocketIO(app)
 # init connected users
 connected_users = {}
 
-class StandaloneVAD:
-    """Standalone VAD component that runs independently"""
-    def __init__(self):
-        from web.vad import VAD
-        self.vad = VAD(cache_history = 10, silence_threshold_ms= 300)
-        self.stop_vad = False
-        
-    def predict(self, audio):
-        """Predict VAD status and return whether audio should be processed"""
-        res = self.vad.predict(audio)
-        
-        # Handle VAD state transitions independently
-        if res['status'] == 'ipu_sl':
-            print("Standalone VAD: Speech start detected")
-            return True, res  # Send audio to dialog state prediction
-            
-        elif res['status'] == 'ipu_cl':
-            # Continue processing while in dialog
-            return True, res
-            
-        elif res['status'] == 'ipu_el':
-            print("Standalone VAD: Speech end detected")
-            self.vad.reset_vad()  
-            return False, res  # Stop sending audio
-            
-        else:
-            # No speech detected
-            self.vad.reset_vad()  
-            return False, res
-    
-    def reset(self):
-        """Reset VAD state"""
-        self.vad.reset_vad()
-    
-    def get_chunk_size(self):
-        return self.vad.get_chunk_size()
-
 class DialogStateParams:
     """Simplified version focusing only on dialog state prediction without VAD"""
     def __init__(self, pipeline_pool):
         try:
-            self.pipeline_obj = pipeline_pool.acquire()
+            self.pipeline_pool = pipeline_pool
+            self.pipeline_obj = self.pipeline_pool.acquire()
             if self.pipeline_obj is None:
                 raise Exception("Failed to get pipeline object from pool")
                 
-            # Audio queues
-            self.raw_pcm_queue = PCMQueue()  # Raw audio from client
-            self.processed_pcm_queue = ProcPCMQueue()  # Audio gated by standalone VAD
-            
-            # Control flags
-            self.stop_pcm = False
-            self.stop_vad = False
+            # init default prompt
+            init_outputs = self.pipeline_obj.pipeline_proc.speech_dialogue(None, stat='pre', 
+                                                                        role='You are a helpful voice assistant. Your answer should be coherent, natural, simple, complete. Your name is Xiao Yun. Your inventor is Tencent.')
+            self.system_role = deepcopy(init_outputs)
+
             
             # Dialog state prediction context
             self.generate_outputs = None
             self.dialog_state_callback = None
             
+            self.feature_gater = AudioFeatureGating()
             if configs.use_standalone_vad:
                 # Standalone VAD component
-                self.standalone_vad = StandaloneVAD()
+                self.standalone_vad = PureVAD()
                 
+            # Control flags
+            self.stop_all_threads = False
+            
+
             # Thread references
-            self.timer = None
             self.pcm_thread = None
             self.vad_thread = None
             
@@ -147,17 +118,22 @@ class DialogStateParams:
     def reset_context(self):
         """Reset the conversation context"""
         try:
-            self.generate_outputs = {
-                'past_key_values': None,
-                'stat': 'pre',
-                'last_id': None,
-                'past_tokens': None,
-                'adapter_cache': None,
-                'encoder_cache': None,
-                'pe_index': 0
-            }
-            # Set system role
-            self.generate_outputs = self.pipeline_obj.pipeline_proc.speech_dialogue(None, **self.generate_outputs)
+
+            # Audio queues
+            self.raw_pcm_queue = PCMQueue()  # Raw audio chunk annotated with IPU status
+            self.annotated_audio_queue = ProcPCMQueue()  # Annotated audio from VAD
+            self.processed_pcm_queue = ProcPCMQueue()  # Gated audio features
+
+
+            # Reset feature gater state
+            if hasattr(self, 'feature_gater'):
+                self.feature_gater.reset()
+
+            if hasattr(self, 'standalone_vad'):
+                self.standalone_vad.reset()
+                
+            self.generate_outputs = deepcopy(self.system_role)#Initially or upon reset, only contains a system prompt
+
         except Exception as e:
             print(f"Error resetting context: {e}")
             raise
@@ -168,101 +144,109 @@ class DialogStateParams:
     
     def set_prompt(self, prompt):
         """Set system prompt and reset context"""
-        try:
-            self.generate_outputs = {
-                'past_key_values': None,
-                'stat': 'pre',
-                'last_id': None,
-                'past_tokens': None,
-                'adapter_cache': None,
-                'encoder_cache': None,
-                'pe_index': 0,
-                'role': prompt
-            }
-            self.generate_outputs = self.pipeline_obj.pipeline_proc.speech_dialogue(None, **self.generate_outputs)
-        except Exception as e:
-            print(f"Error setting prompt: {e}")
-            raise
-    
+        self.system_role = self.pipeline_obj.pipeline_proc.speech_dialogue(None, stat='pre', role=prompt)
+
     def release(self):
         """Release resources"""
         try:
-            self.stop_pcm = True
-            self.stop_vad = True
+            self.stop_all_threads = True
             if self.pipeline_obj:
-                self.pipeline_obj.release()
-                self.pipeline_obj = None
+                self.pipeline_pool.release(self.pipeline_obj)
         except Exception as e:
             print(f"Error releasing resources: {e}")
 
-
 def standalone_vad_thread(sid):
     """
-    Standalone VAD thread that gates audio from raw queue to processed queue
-    
-    Parameters:
-    - sid (str): Session ID
+    Standalone VAD thread that consumes raw audio, annotates it, and puts it
+    into the annotated_audio_queue.
     """
-    chunk_size = connected_users[sid].standalone_vad.get_chunk_size()
+    user = connected_users[sid]
+    chunk_size = user.standalone_vad.get_chunk_size()
     print(f"Sid: {sid} Starting standalone VAD thread with chunk size: {chunk_size}")
     
-    while True:
-        if connected_users[sid].stop_vad:
-            print(f"Sid: {sid} Stopping standalone VAD thread")
-            break
-            
+    while not user.stop_all_threads:
+
         time.sleep(0.01)
-        
-        # Get audio from raw queue
-        audio_chunk = connected_users[sid].raw_pcm_queue.get(chunk_size)
+
+        audio_chunk = user.raw_pcm_queue.get(chunk_size)
         if audio_chunk is None:
             continue
-            
-        print(f"Sid: {sid} VAD processing audio chunk of size: {len(audio_chunk)}")
-        
-        # Run VAD prediction
-        should_process, vad_result = connected_users[sid].standalone_vad.predict(audio_chunk)
-        
-        # Emit VAD events for monitoring gui
-        if vad_result['status'] == 'ipu_sl':
-            emit_vad_event(sid, vad_result['status'])
-            emit_state_update(sid, vad_state=True)
-        elif vad_result['status'] == 'ipu_el':
-            emit_vad_event(sid, vad_result['status'])
-            emit_state_update(sid, vad_state=False)
-        elif vad_result['status'] == 'ipu_cl':
-            emit_state_update(sid, vad_state=True)
-        
-        # Gate audio to dialog state prediction based on VAD decision
-        if should_process:
-            print(f"Sid: {sid} VAD approved audio for dialog state prediction")
-            
-            # For speech start, add cached chunks first with proper labels
-            if vad_result['status'] == 'ipu_sl':
-                for i, feature in enumerate(vad_result['feature_last_chunk']):
-                    feature_data = {
-                        'feature': feature,
-                        'status': 'ipu_sl' if i == 0 else 'ipu_cl'  # First cached chunk is ipu_sl, rest are ipu_cl
-                    }
-                    connected_users[sid].processed_pcm_queue.put(feature_data)
-                
-                # Current chunk becomes ipu_cl since ipu_sl was assigned to first cached chunk
-                feature_data = {
-                    'feature': vad_result['feature'],
-                    'status': 'ipu_cl'
-                }
-                connected_users[sid].processed_pcm_queue.put(feature_data)
-            
-            # For continuing or ending speech, pass through the VAD status
-            else:
-                feature_data = {
-                    'feature': vad_result['feature'],
-                    'status': vad_result['status']  # 'ipu_cl' or 'ipu_el'
-                }
-                connected_users[sid].processed_pcm_queue.put(feature_data)
-        else:
-            print(f"Sid: {sid} VAD blocked audio from dialog state prediction")
 
+        # print(f"Sid: {sid} Received raw audio chunk of size: {len(audio_chunk)}")
+            
+        # Run VAD prediction to get annotated audio
+        annotated_audio = user.standalone_vad.predict(audio_chunk)
+        
+        # Emit VAD events for monitoring GUI
+        status = annotated_audio['status']
+        if status == 'ipu_sl':
+            emit_vad_event(sid, status)
+            emit_state_update(sid, vad_state=True)
+        elif status == 'ipu_el':
+            emit_vad_event(sid, status)
+            emit_state_update(sid, vad_state=False)
+        elif status == 'ipu_cl':
+            emit_state_update(sid, vad_state=True)
+
+        # Put annotated audio into the queue for the feature gating thread
+        user.annotated_audio_queue.put(annotated_audio)
+
+    print(f"Sid: {sid} Stopping standalone VAD thread")
+
+def feature_gating_thread(sid):
+    """
+    This thread gets annotated audio, computes fbank features for all of it
+    to maintain state, and gates the features for IPU-related chunks to the
+    main processing thread.
+    """
+    user = connected_users[sid]
+    print(f"Sid: {sid} Starting feature gating thread.")
+
+    while not user.stop_all_threads:
+
+        time.sleep(0.01)
+        
+        # Get annotated audio chunk
+        annotated_audio = user.annotated_audio_queue.get()
+        
+
+        if(annotated_audio is None):
+            continue
+
+        # print(f"Sid: {sid} Received annotated audio chunk with status: {annotated_audio['status']}, size: {len(annotated_audio['audio'])}")
+
+
+        # Process chunk to extract and gate features
+        gated_feature_data = user.feature_gater.process_and_gate(annotated_audio)
+        
+        # If the feature gater returns data, put it in the processed queue for the LLM to process.
+        if gated_feature_data:
+            
+            # print(f"Sid: {sid} Approved annotated audio chunk with status: {annotated_audio['status']}, size: {len(annotated_audio['audio'])}")
+
+            # For speech start, the original logic sends cached chunks separately.
+            if gated_feature_data['status'] == 'ipu_sl':
+                # The 'feature_last_chunk' contains the features of chunks not belonging to the current IPU
+                # We need to send them one by one.
+                for i, feature in enumerate(gated_feature_data['feature_last_chunk']):
+                    feature_item = {
+                        'feature': feature,
+                        'status': 'ipu_sl' if i == 0 else 'ipu_cl'##Treat the first input chunk in the history as the start of the IPU, despite the fact that the IPU is detected at the current chunk.
+                    }
+                    user.processed_pcm_queue.put(feature_item)
+                
+                # The current chunk becomes 'ipu_cl' as it follows the cached start.
+                feature_item = {
+                    'feature': gated_feature_data['feature'],
+                    'status': 'ipu_cl'##Treat the current chunk as the continuation of the IPU, although the VAD only detects it here
+                }
+                user.processed_pcm_queue.put(feature_item)
+            else:
+                # For 'ipu_cl' and 'ipu_el', just forward the data.
+                user.processed_pcm_queue.put(gated_feature_data)
+
+
+    print(f"Sid: {sid} Stopping feature gating thread.")
 
 def process_pcm(sid):
     """
@@ -278,14 +262,15 @@ def process_pcm(sid):
     outputs = None
     
     while True:
-        if connected_users[sid].stop_pcm:
-            print(f"Sid: {sid} Stopping dialog state prediction thread")
-            break
-        
+
         time.sleep(0.01)
         
+        if connected_users[sid].stop_all_threads:
+            print(f"Sid: {sid} Stopping dialog state prediction thread")
+            break
+                
         # Get processed audio from the gated queue
-        feature_data = connected_users[sid].processed_pcm_queue.get(1)  # Get one item, i.e., one chunk
+        feature_data = connected_users[sid].processed_pcm_queue.get()  # Get one item, i.e., one chunk
         if feature_data is None:
             # Emit an indicator that no dialog state decision is made
             emit_state_update(sid, dialog_state='no_decision')
@@ -320,7 +305,6 @@ def process_pcm(sid):
                 outputs = llm_prefill(feature_data, outputs, sid)
             else:
                 print(f"Sid: {sid} Warning: Received {feature_data['status']} without active IPU context")
-
 
 def llm_prefill(data, outputs, sid, is_first_pack=False):
     """
@@ -388,14 +372,11 @@ def llm_prefill(data, outputs, sid, is_first_pack=False):
 
     return outputs
 
-
 def disconnect_user(sid):
     """Disconnect user and cleanup resources"""
     if sid in connected_users:
         print(f"Disconnecting user {sid} due to timeout")
         socketio.emit('out_time', to=sid)
-        connected_users[sid].stop_pcm = True
-        connected_users[sid].stop_vad = True
         connected_users[sid].release()
         time.sleep(3)
         del connected_users[sid]
@@ -489,10 +470,6 @@ def handle_connect():
             emit('connection_failed', {'error': str(e)})
             return False
         
-        # Set up timeout timer
-        timer = Timer(TIMEOUT, disconnect_user, [sid])
-        timer.start()
-        connected_users[sid].timer = timer
         
         # Set callback for dialog_ss events
         connected_users[sid].set_dialog_callback(dialog_ss_callback)
@@ -507,8 +484,14 @@ def handle_connect():
             vad_thread.start()
             connected_users[sid].vad_thread = vad_thread
         else:
-            print(f"User {sid}: Standalone VAD disabled, relying on external VAD input.")
+            print(f"User {sid}: Standalone VAD disabled, relying on external VAD input via /annotated_audio endpoint.")
         
+        
+        # Start feature gating thread
+        feature_gating_thread_obj = threading.Thread(target=feature_gating_thread, args=(sid,))
+        feature_gating_thread_obj.start()
+        connected_users[sid].feature_gating_thread = feature_gating_thread_obj
+
 
         # Start dialog state prediction thread
         pcm_thread = threading.Thread(target=process_pcm, args=(sid,))
@@ -523,8 +506,6 @@ def handle_connect():
     except Exception as e:
         print(f'Error in handle_connect for {request.sid}: {e}')
         if request.sid in connected_users:
-            if hasattr(connected_users[request.sid], 'timer'):
-                connected_users[request.sid].timer.cancel()
             connected_users[request.sid].release()
             del connected_users[request.sid]
         emit('connection_failed', {'error': str(e)})
@@ -537,22 +518,21 @@ def handle_disconnect():
         if sid in connected_users:
             print(f'Disconnecting user {sid}')
             
-            # Cancel timer
-            if hasattr(connected_users[sid], 'timer'):
-                connected_users[sid].timer.cancel()
-            
+
             # Stop all threads
-            connected_users[sid].stop_pcm = True
-            connected_users[sid].stop_vad = True
+            connected_users[sid].stop_all_threads = True
             
             # Wait for threads to finish
             if hasattr(connected_users[sid], 'pcm_thread'):
                 connected_users[sid].pcm_thread.join(timeout=2.0)
+            if hasattr(connected_users[sid], 'feature_gating_thread'):
+                connected_users[sid].feature_gating_thread.join(timeout=2.0)
             if hasattr(connected_users[sid], 'vad_thread'):
                 connected_users[sid].vad_thread.join(timeout=2.0)
             
             # Release resources
             connected_users[sid].release()
+
             del connected_users[sid]
             
         pipeline_pool.print_info()
@@ -565,13 +545,7 @@ def handle_disconnect():
 def handle_recording_started():
     sid = request.sid
     if sid in connected_users:
-        if hasattr(connected_users[sid], 'timer'):
-            connected_users[sid].timer.cancel()
-        connected_users[sid].timer = Timer(TIMEOUT, disconnect_user, [sid])
-        connected_users[sid].timer.start()
-        
-        # Reset both VAD and context
-        connected_users[sid].standalone_vad.reset()
+        # Reset VAD, feature gater, and context
         connected_users[sid].reset_context()
         emit_state_update(sid, vad_state=False, dialog_state='dialog_sl')
     else:
@@ -582,10 +556,7 @@ def handle_recording_started():
 def handle_recording_stopped():
     sid = request.sid
     if sid in connected_users:
-        if hasattr(connected_users[sid], 'timer'):
-            connected_users[sid].timer.cancel()
-        connected_users[sid].timer = Timer(TIMEOUT, disconnect_user, [sid])
-        connected_users[sid].timer.start()
+        pass
     else:
         disconnect()
     print('Recording stopped')
@@ -604,10 +575,6 @@ def handle_prompt_text(text):
 def handle_audio(data):
     sid = request.sid
     if sid in connected_users:
-        if hasattr(connected_users[sid], 'timer'):
-            connected_users[sid].timer.cancel()
-        connected_users[sid].timer = Timer(TIMEOUT, disconnect_user, [sid])
-        connected_users[sid].timer.start()
         
         data = json.loads(data)
         audio_data = np.frombuffer(bytes(data['audio']), dtype=np.int16)
@@ -616,6 +583,30 @@ def handle_audio(data):
         connected_users[sid].raw_pcm_queue.put(audio_data.astype(np.float32) / 32768.0)
     else:
         disconnect()
+
+@socketio.on('annotated_audio')
+def handle_annotated_audio(data):
+    """
+    New endpoint for receiving audio chunks already annotated with VAD status.
+    Expected data format: {'audio': bytes, 'status': 'ipu_cl' | 'ipu_sl' | 'ipu_el' | null}
+    """
+    sid = request.sid
+    if sid in connected_users:
+
+        data = json.loads(data)
+        audio_data = np.frombuffer(bytes(data['audio']), dtype=np.int16)
+        
+        ## Normalize audio data to float32 range. Note that if standalone VAD is used, it will already be normalized and that's why there we directly put the audio data into the annotated audio queue
+        annotated_chunk = {
+            "audio": audio_data.astype(np.float32) / 32768.0,
+            "status": data.get('status')
+        }
+        
+        # Put annotated audio into the queue for the feature gating thread
+        connected_users[sid].annotated_audio_queue.put(annotated_chunk)
+    else:
+        disconnect()
+
 
 if __name__ == "__main__":
     print("Starting Freeze-Omni Dialog State Server")
