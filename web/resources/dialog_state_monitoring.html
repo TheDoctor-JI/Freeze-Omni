@@ -403,6 +403,7 @@
                 for (let i = 0; i < inputData.length; i++) int16Array[i] = inputData[i] * 0x7FFF;
                 socket.emit('audio', JSON.stringify({ 
                                                         sr: fixedSampleRate, 
+                                                        enc: 's16le',
                                                         audio: Array.from(new Uint8Array(int16Array.buffer)) 
                                                     }));
                 drawWaveform(inputData, inputCtx);

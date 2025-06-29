@@ -651,11 +651,13 @@ def handle_audio(data):
 
         if(data['sr'] != SAMPLING_RATE):
             raise ValueError(f"Expected audio sampling rate {SAMPLING_RATE}, but got {data['sr']}")
+        if(data['enc'] != 's16le'):
+            raise ValueError(f"Expected audio encoding 's16le', but got {data['enc']}")
 
-        audio_data = np.frombuffer(bytes(data['audio']), dtype=np.int16)
         
-        # Put raw audio into the raw queue for VAD processing
-        connected_users[sid].raw_pcm_queue.put(audio_data.astype(np.float32) / 32768.0)
+        ## Normalize audio data to float32 range. Most modern platform are little endian
+        audio_data = np.frombuffer(bytes(data['audio']), dtype=np.int16)
+        connected_users[sid].raw_pcm_queue.put(audio_data.astype(np.float32) / 32768.0) #Send to VAD
     else:
         disconnect()
 
@@ -672,10 +674,13 @@ def handle_annotated_audio(data):
         
         if(data['sr'] != SAMPLING_RATE):
             raise ValueError(f"Expected audio sampling rate {SAMPLING_RATE}, but got {data['sr']}")
-        
-        audio_data = np.frombuffer(bytes(data['audio']), dtype=np.int16)
-        
+        if(data['enc'] != 's16le'):
+            raise ValueError(f"Expected audio encoding 's16le', but got {data['enc']}")
+
+
         ## Normalize audio data to float32 range. Note that if standalone VAD is used, it will already be normalized and that's why there we directly put the audio data into the annotated audio queue
+        ## Most modern platform are little endian
+        audio_data = np.frombuffer(bytes(data['audio']), dtype=np.int16)
         annotated_chunk = {
             "audio": audio_data.astype(np.float32) / 32768.0,
             "status": data.get('status')
