@@ -51,4 +51,5 @@ CUDA_VISIBLE_DEVICES=1 python bin/server_alt.py \
     --llm_path "$LLM_PATH" \
     --ip "$IP" \
     --port "$PORT" \
-    --max_users "$MAX_USERS"
+    --max_users "$MAX_USERS" \
+    --use_standalone_vad

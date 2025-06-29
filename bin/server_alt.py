@@ -38,6 +38,7 @@ def get_args():
     parser.add_argument('--max_users', type=int, default=5)
     parser.add_argument('--llm_exec_nums', type=int, default=1)
     parser.add_argument('--timeout', type=int, default=600)
+    parser.add_argument('--use_standalone_vad', action='store_true', help='Initiate the standalone VAD thread. If not set, relies on external VAD input.')
     args = parser.parse_args()
     print(args)
     return args
@@ -125,9 +126,10 @@ class DialogStateParams:
             self.generate_outputs = None
             self.dialog_state_callback = None
             
-            # Standalone VAD component
-            self.standalone_vad = StandaloneVAD()
-            
+            if configs.use_standalone_vad:
+                # Standalone VAD component
+                self.standalone_vad = StandaloneVAD()
+                
             # Thread references
             self.timer = None
             self.pcm_thread = None
@@ -221,7 +223,7 @@ def standalone_vad_thread(sid):
         # Run VAD prediction
         should_process, vad_result = connected_users[sid].standalone_vad.predict(audio_chunk)
         
-        # Emit VAD events for monitoring
+        # Emit VAD events for monitoring gui
         if vad_result['status'] == 'ipu_sl':
             emit_vad_event(sid, vad_result['status'])
             emit_state_update(sid, vad_state=True)
@@ -261,7 +263,8 @@ def standalone_vad_thread(sid):
         else:
             print(f"Sid: {sid} VAD blocked audio from dialog state prediction")
 
-def send_pcm(sid):
+
+def process_pcm(sid):
     """
     Main loop for processing gated audio and predicting dialog states.
     Uses VAD-provided labels to determine IPU boundaries.
@@ -497,13 +500,18 @@ def handle_connect():
         # Send initial state
         emit_state_update(sid, vad_state=False, dialog_state='dialog_sl', generating=False)
         
-        # Start standalone VAD thread
-        vad_thread = threading.Thread(target=standalone_vad_thread, args=(sid,))
-        vad_thread.start()
-        connected_users[sid].vad_thread = vad_thread
+        # Start standalone VAD thread if enabled
+        if configs.use_standalone_vad:
+            print(f"User {sid}: Standalone VAD enabled, starting VAD thread.")
+            vad_thread = threading.Thread(target=standalone_vad_thread, args=(sid,))
+            vad_thread.start()
+            connected_users[sid].vad_thread = vad_thread
+        else:
+            print(f"User {sid}: Standalone VAD disabled, relying on external VAD input.")
         
+
         # Start dialog state prediction thread
-        pcm_thread = threading.Thread(target=send_pcm, args=(sid,))
+        pcm_thread = threading.Thread(target=process_pcm, args=(sid,))
         pcm_thread.start()
         connected_users[sid].pcm_thread = pcm_thread
         
