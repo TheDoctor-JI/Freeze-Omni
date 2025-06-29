@@ -93,7 +93,7 @@ class DialogStateParams:
             self.generate_outputs = None
             self.dialog_state_callback = None
             
-            self.feature_gater = AudioFeatureGating()
+            self.feature_gater = AudioFeatureGating(cache_history_size = 10, onset_input_chunk_cache_size = 6)
             if configs.use_standalone_vad:
                 # Standalone VAD component
                 self.standalone_vad = PureVAD()
@@ -238,7 +238,7 @@ def feature_gating_thread(sid):
                 # The current chunk becomes 'ipu_cl' as it follows the cached start.
                 feature_item = {
                     'feature': gated_feature_data['feature'],
-                    'status': 'ipu_cl'##Treat the current chunk as the continuation of the IPU, although the VAD only detects it here
+                    'status': 'ipu_cl' if len(gated_feature_data['feature_last_chunk']) > 0 else 'ipu_sl'##Treat the current chunk as the continuation of the IPU, although the VAD only detects it here, if we are sending context input chunks
                 }
                 user.processed_pcm_queue.put(feature_item)
             else:
@@ -272,8 +272,6 @@ def process_pcm(sid):
         # Get processed audio from the gated queue
         feature_data = connected_users[sid].processed_pcm_queue.get()  # Get one item, i.e., one chunk
         if feature_data is None:
-            # Emit an indicator that no dialog state decision is made
-            emit_state_update(sid, dialog_state='no_decision')
             continue
             
         print(f"Sid: {sid} Processing approved audio for dialog state prediction, status: {feature_data['status']}")
@@ -326,19 +324,19 @@ def llm_prefill(data, outputs, sid, is_first_pack=False):
     # Handle different VAD statuses
     if data['status'] == 'ipu_sl':
         # Stage1: start listen
-        print(f"Sid: {sid} Start listening to new IPU")
+        print(f"Sid: {sid} Start listening to new IPU.")
         outputs = connected_users[sid].pipeline_obj.pipeline_proc.speech_dialogue(
             torch.tensor(data['feature']), **outputs)
     
     elif data['status'] == 'ipu_el':
         # VAD detected speech end - process final chunk
-        print(f"Sid: {sid} VAD end detected - processing final chunk")
+        print(f"Sid: {sid} VAD end detected - processing final chunk.")
         outputs = connected_users[sid].pipeline_obj.pipeline_proc.speech_dialogue(
             torch.tensor(data['feature']), **outputs)
     
     elif data['status'] == 'ipu_cl':
         # Continue listening
-        print(f"Sid: {sid} within IPU - processing chunks")
+        print(f"Sid: {sid} within IPU - processing chunks.")
         outputs = connected_users[sid].pipeline_obj.pipeline_proc.speech_dialogue(
                 torch.tensor(data['feature']), **outputs)
         
@@ -367,7 +365,7 @@ def llm_prefill(data, outputs, sid, is_first_pack=False):
         if connected_users[sid].dialog_state_callback:
             connected_users[sid].dialog_state_callback(sid, deepcopy(outputs))
     
-        # Reset to the sl state
+        # Reset to the sl state -- otherwise the LLM will start to decode utterances.
         outputs['stat'] = 'dialog_sl'
 
     return outputs

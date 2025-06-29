@@ -43,62 +43,28 @@
             flex-direction: column;
             gap: 15px;
         }
-        .control-section {
+        .control-section, .waveform-section, .status-section, .timeline-section {
             background: #f8f9fa;
             padding: 20px;
-            border-radius: 8px;
-            border: 1px solid #dee2e6;
-        }
-        .waveform-section {
-            background: #f8f9fa;
-            padding: 20px;
-            border-radius: 8px;
-            border: 1px solid #dee2e6;
-        }
-        .status-section {
-            background: #f8f9fa;
-            padding: 15px;
             border-radius: 8px;
             border: 1px solid #dee2e6;
         }
         .timeline-section {
-            background: #f8f9fa;
-            padding: 15px;
-            border-radius: 8px;
-            border: 1px solid #dee2e6;
             height: 200px;
         }
-        .ipu-events-section {
-            background: #fff3cd;
+        .ipu-events-section, .dialog-events-section, .callback-events-section {
             border-radius: 8px;
-            border: 1px solid #ffeaa7;
             height: 250px;
             display: flex;
             flex-direction: column;
         }
-        .dialog-events-section {
-            background: #d1ecf1;
-            border-radius: 8px;
-            border: 1px solid #bee5eb;
-            height: 250px;
-            display: flex;
-            flex-direction: column;
-        }
-        .callback-events-section {
-            background: #f8d7da;
-            border-radius: 8px;
-            border: 1px solid #f5c6cb;
-            height: 200px;
-            display: flex;
-            flex-direction: column;
-        }
+        .ipu-events-section { background: #fff3cd; border: 1px solid #ffeaa7; }
+        .dialog-events-section { background: #d1ecf1; border: 1px solid #bee5eb; }
+        .callback-events-section { background: #f8d7da; border: 1px solid #f5c6cb; height: 200px; }
         .event-section-header {
             padding: 15px 15px 10px 15px;
             border-bottom: 1px solid rgba(0,0,0,0.1);
             background: rgba(255,255,255,0.8);
-            position: sticky;
-            top: 0;
-            z-index: 10;
         }
         .event-section-content {
             flex: 1;
@@ -124,24 +90,11 @@
             border-radius: 6px;
             transition: all 0.3s ease;
         }
-        .start-btn {
-            background: #28a745;
-            color: white;
-        }
-        .start-btn:hover {
-            background: #218838;
-        }
-        .stop-btn {
-            background: #dc3545;
-            color: white;
-        }
-        .stop-btn:hover {
-            background: #c82333;
-        }
-        .stop-btn:disabled {
-            background: #6c757d;
-            cursor: not-allowed;
-        }
+        .start-btn { background: #28a745; color: white; }
+        .start-btn:hover { background: #218838; }
+        .stop-btn { background: #dc3545; color: white; }
+        .stop-btn:hover { background: #c82333; }
+        .stop-btn:disabled { background: #6c757d; cursor: not-allowed; }
         .status-indicator {
             display: inline-block;
             width: 12px;
@@ -149,17 +102,9 @@
             border-radius: 50%;
             margin-right: 8px;
         }
-        .status-active {
-            background: #28a745;
-            box-shadow: 0 0 5px #28a745;
-        }
-        .status-inactive {
-            background: #6c757d;
-        }
-        .status-generating {
-            background: #dc3545;
-            box-shadow: 0 0 5px #dc3545;
-        }
+        .status-active { background: #28a745; box-shadow: 0 0 5px #28a745; }
+        .status-inactive { background: #6c757d; }
+        .status-generating { background: #dc3545; box-shadow: 0 0 5px #dc3545; }
         .dialog-state {
             padding: 8px 12px;
             border-radius: 20px;
@@ -167,23 +112,10 @@
             text-align: center;
             margin: 5px 0;
         }
-        /* Updated dialog state colors - only 4 states */
-        .state-dialog_sl {
-            background: #007bff;
-            color: white;
-        }
-        .state-dialog_cl {
-            background: #28a745;
-            color: white;
-        }
-        .state-dialog_ss {
-            background: #dc3545;
-            color: white;
-        }
-        .state-no_decision {
-            background: #6c757d;
-            color: white;
-        }
+        .state-dialog_sl { background: #007bff; color: white; }
+        .state-dialog_cl { background: #28a745; color: white; }
+        .state-dialog_ss { background: #dc3545; color: white; }
+        .state-no_decision { background: #6c757d; color: white; }
         .alert {
             display: none;
             margin-top: 20px;
@@ -192,12 +124,8 @@
             color: white;
             border-radius: 5px;
         }
-        .success-alert {
-            background-color: #28a745;
-        }
-        .text-input-container {
-            margin-top: 15px;
-        }
+        .success-alert { background-color: #28a745; }
+        .text-input-container { margin-top: 15px; }
         .text-input-container textarea {
             padding: 10px;
             font-size: 14px;
@@ -209,87 +137,22 @@
             border-radius: 4px;
             box-sizing: border-box;
         }
-        .prompt-btn {
-            background: #17a2b8;
-            color: white;
-        }
-        .prompt-btn:hover {
-            background: #138496;
-        }
-        h2 {
-            margin: 0;
-            color: #495057;
-            font-size: 18px;
-        }
-        h3 {
-            margin-top: 0;
-            color: #6c757d;
-            font-size: 14px;
-            font-weight: normal;
-        }
-        .status-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 10px;
-            margin: 10px 0;
-        }
-        .status-item {
-            display: flex;
-            align-items: center;
-            padding: 8px;
-            background: white;
-            border-radius: 4px;
-            border: 1px solid #e9ecef;
-        }
-        .event-item {
-            padding: 8px;
-            margin: 5px 0;
-            background: white;
-            border-radius: 4px;
-            border-left: 4px solid;
-            font-size: 12px;
-        }
-        .event-ipu_sl {
-            border-left-color: #28a745;
-        }
-        .event-ipu_cl {
-            border-left-color: #007bff;
-        }
-        .event-ipu_el {
-            border-left-color: #dc3545;
-        }
-        /* Updated dialog event colors to match the simplified states */
-        .event-dialog_sl {
-            border-left-color: #007bff;
-        }
-        .event-dialog_cl {
-            border-left-color: #28a745;
-        }
-        .event-dialog_ss {
-            border-left-color: #dc3545;
-        }
-        .event-time {
-            color: #6c757d;
-            font-size: 10px;
-        }
-        .disabled-notice {
-            background: #e9ecef;
-            padding: 10px;
-            border-radius: 4px;
-            text-align: center;
-            color: #6c757d;
-            font-style: italic;
-        }
-        /* Auto-scroll styling */
-        .auto-scroll {
-            scroll-behavior: smooth;
-        }
-        .event-logs-container {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 15px;
-            margin-top: 15px;
-        }
+        .prompt-btn { background: #17a2b8; color: white; }
+        .prompt-btn:hover { background: #138496; }
+        h2 { margin: 0; color: #495057; font-size: 18px; }
+        h3 { margin-top: 0; color: #6c757d; font-size: 14px; font-weight: normal; }
+        .status-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 10px 0; }
+        .status-item { display: flex; align-items: center; padding: 8px; background: white; border-radius: 4px; border: 1px solid #e9ecef; }
+        .event-item { padding: 8px; margin: 5px 0; background: white; border-radius: 4px; border-left: 4px solid; font-size: 12px; }
+        .event-ipu_sl { border-left-color: #28a745; }
+        .event-ipu_cl { border-left-color: #007bff; }
+        .event-ipu_el { border-left-color: #dc3545; }
+        .event-dialog_sl { border-left-color: #007bff; }
+        .event-dialog_cl { border-left-color: #28a745; }
+        .event-dialog_ss { border-left-color: #dc3545; }
+        .event-time { color: #6c757d; font-size: 10px; }
+        .disabled-notice { background: #e9ecef; padding: 10px; border-radius: 4px; text-align: center; color: #6c757d; font-style: italic; }
+        .event-logs-container { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-top: 15px; }
     </style>
 </head>
 <body>
@@ -301,19 +164,15 @@
         
         <div class="content">
             <div class="left-panel">
-                <!-- Control Section -->
                 <div class="control-section">
                     <h2>Control Panel</h2>
                     <button id="startButton" class="start-btn">Start Monitoring</button>
                     <button id="stopButton" class="stop-btn" disabled>Stop Monitoring</button>
-                    
                     <div class="text-input-container">
                         <textarea id="textInput" placeholder="Write prompt here and click 'Set Prompt', then restart interaction."></textarea>
                         <button id="sendTextButton" class="prompt-btn">Set Prompt</button>
                     </div>
                 </div>
-
-                <!-- Waveform Section -->
                 <div class="waveform-section">
                     <h2>Audio Waveforms</h2>
                     <h3>Input Waveform</h3>
@@ -322,33 +181,18 @@
                     <div class="disabled-notice">Audio output disabled in dialog state monitoring mode</div>
                     <canvas id="outputCanvas" width="500" height="80" style="opacity: 0.3;"></canvas>
                 </div>
-
-                <!-- Event Logs Container -->
                 <div class="event-logs-container">
-                    <!-- IPU Events Log -->
                     <div class="ipu-events-section">
-                        <div class="event-section-header">
-                            <h2>IPU Events Log</h2>
-                        </div>
-                        <div class="event-section-content auto-scroll" id="ipuEventsContainer">
-                            <div id="ipuEventsList"></div>
-                        </div>
+                        <div class="event-section-header"><h2>IPU Events Log</h2></div>
+                        <div class="event-section-content" id="ipuEventsContainer"><div id="ipuEventsList"></div></div>
                     </div>
-
-                    <!-- Dialog State Events Log -->
                     <div class="dialog-events-section">
-                        <div class="event-section-header">
-                            <h2>Dialog State Events</h2>
-                        </div>
-                        <div class="event-section-content auto-scroll" id="dialogEventsContainer">
-                            <div id="dialogEventsList"></div>
-                        </div>
+                        <div class="event-section-header"><h2>Dialog State Events</h2></div>
+                        <div class="event-section-content" id="dialogEventsContainer"><div id="dialogEventsList"></div></div>
                     </div>
                 </div>
             </div>
-
             <div class="right-panel">
-                <!-- Current Status Section -->
                 <div class="status-section">
                     <h2>Current System Status</h2>
                     <div class="status-grid">
@@ -363,42 +207,27 @@
                     </div>
                     <div class="dialog-state" id="dialogState">no_decision</div>
                 </div>
-
-                <!-- Timeline: VAD State -->
                 <div class="timeline-section">
                     <h2>VAD State Timeline (10s)</h2>
-                    <div class="chart-container">
-                        <canvas id="vadChart"></canvas>
-                    </div>
+                    <div class="chart-container"><canvas id="vadChart"></canvas></div>
                 </div>
-
-                <!-- Timeline: Dialog State -->
                 <div class="timeline-section">
                     <h2>Dialog State Timeline (10s)</h2>
-                    <div class="chart-container">
-                        <canvas id="dialogChart"></canvas>
-                    </div>
+                    <div class="chart-container"><canvas id="dialogChart"></canvas></div>
                 </div>
-
-                <!-- Dialog SS Callbacks Log -->
                 <div class="callback-events-section">
-                    <div class="event-section-header">
-                        <h2>Dialog SS Callbacks</h2>
-                    </div>
-                    <div class="event-section-content auto-scroll" id="callbackEventsContainer">
-                        <div id="callbackEventsList"></div>
-                    </div>
+                    <div class="event-section-header"><h2>Dialog SS Callbacks</h2></div>
+                    <div class="event-section-content" id="callbackEventsContainer"><div id="callbackEventsList"></div></div>
                 </div>
             </div>
         </div>
-
         <div id="alertBox" class="alert">Too many users connected. Please refresh and try again.</div>
         <div id="alertBox2" class="alert">Connect time out. Please refresh and reconnect.</div>
         <div id="alertBox3" class="alert success-alert">Prompt set success. Please restart interaction.</div>
     </div>
 
     <script>
-        // Audio elements and controls
+        // DOM Elements
         const startButton = document.getElementById('startButton');
         const stopButton = document.getElementById('stopButton');
         const inputCanvas = document.getElementById('inputCanvas');
@@ -407,414 +236,194 @@
         const outputCtx = outputCanvas.getContext('2d');
         const textInput = document.getElementById('textInput');
         const sendTextButton = document.getElementById('sendTextButton');
-
-        // Status elements
         const vadIndicator = document.getElementById('vadIndicator');
         const genIndicator = document.getElementById('genIndicator');
         const vadStatus = document.getElementById('vadStatus');
         const genStatus = document.getElementById('genStatus');
         const dialogState = document.getElementById('dialogState');
-
-        // Event lists and containers
         const ipuEventsList = document.getElementById('ipuEventsList');
         const dialogEventsList = document.getElementById('dialogEventsList');
         const callbackEventsList = document.getElementById('callbackEventsList');
         const ipuEventsContainer = document.getElementById('ipuEventsContainer');
         const dialogEventsContainer = document.getElementById('dialogEventsContainer');
         const callbackEventsContainer = document.getElementById('callbackEventsContainer');
-
-        // Alert elements
         const alertBox = document.getElementById('alertBox');
         const alertBox2 = document.getElementById('alertBox2');
         const alertBox3 = document.getElementById('alertBox3');
 
         const socket = io();
 
-        let localStream;
-        let audioContext;
-        let processor;
+        // Audio and Recording State
+        let localStream, audioContext, processor;
         let isRecording = false;
         const fixedSampleRate = 16000;
 
-        // Timeline data storage with queue-based system
-        const timelineLength = 100;
-        let vadTimeline = new Array(timelineLength).fill(false);
-        
-        // Enhanced dialog timeline with state preservation queue
-        let dialogTimeline = new Array(timelineLength).fill('no_decision');
-        let dialogStateQueue = []; // Queue for preserving important dialog state changes
-        let lastSignificantState = 'no_decision';
-        let stateHoldDuration = 0; // How long to hold current significant state
-        const minStateHoldTime = 10; // Minimum frames to hold a significant state (1 second at 100ms intervals)
-
-        // Current state tracking
-        let currentVadState = false;
-        let currentDialogState = 'no_decision';
-        let dialogSSTriggered = false;
-
-        // Chart.js instances
+        // Timeline and Chart State
+        const timelineLength = 100; // 100 * 100ms = 10 seconds
+        let vadTimeline = new Array(timelineLength).fill(null);
+        let dialogTimeline = new Array(timelineLength).fill(null);
+        let vadEventThisInterval = null;
+        let dialogEventThisInterval = null;
+        let ssCallbackEventThisInterval = false; // Tracks SS callback event in a 100ms window
         let vadChart, dialogChart;
 
-        // Initialize charts
+        // Application State
+        let currentVadState = false;
+        let currentDialogState = 'no_decision';
+
+        // Chart Initialization
         function initializeCharts() {
-            // VAD Chart
             const vadCtx = document.getElementById('vadChart').getContext('2d');
             vadChart = new Chart(vadCtx, {
                 type: 'bar',
                 data: {
-                    labels: new Array(timelineLength).fill('').map((_, i) => `${(timelineLength - i) * 0.1}s`),
-                    datasets: [{
-                        label: 'VAD Active',
-                        data: vadTimeline,
-                        backgroundColor: vadTimeline.map(val => val ? '#28a745' : '#e9ecef'),
-                        borderWidth: 0
-                    }]
+                    labels: new Array(timelineLength).fill(''),
+                    datasets: [
+                        { label: 'VAD Active', data: [], backgroundColor: '#28a745' },
+                        { label: 'VAD Inactive', data: [], backgroundColor: '#6c757d' },
+                        { label: 'No VAD Event', data: [], backgroundColor: '#e9ecef' }
+                    ]
                 },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    scales: {
-                        y: {
-                            beginAtZero: true,
-                            max: 1,
-                            ticks: {
-                                stepSize: 1,
-                                callback: function(value) {
-                                    return value ? 'Active' : 'Inactive';
-                                }
-                            }
-                        },
-                        x: {
-                            display: false
-                        }
-                    },
-                    plugins: {
-                        legend: {
-                            display: true,
-                            position: 'top'
-                        }
-                    }
-                }
+                options: { responsive: true, maintainAspectRatio: false, scales: { x: { stacked: true, display: false }, y: { stacked: true, beginAtZero: true, max: 1, ticks: { display: false } } }, plugins: { legend: { display: true, position: 'top' } } }
             });
 
-            // Dialog State Chart - Updated for queue-based system
             const dialogCtx = document.getElementById('dialogChart').getContext('2d');
-            const stateColors = {
-                'dialog_sl': '#007bff',    // Blue
-                'dialog_cl': '#28a745',    // Green
-                'dialog_ss': '#dc3545',    // Red
-                'no_decision': '#6c757d'   // Grey
-            };
-
             dialogChart = new Chart(dialogCtx, {
                 type: 'bar',
                 data: {
-                    labels: new Array(timelineLength).fill('').map((_, i) => `${(timelineLength - i) * 0.1}s`),
-                    datasets: [{
-                        label: 'Start Listen',
-                        data: dialogTimeline.map(state => state === 'dialog_sl' ? 4 : 0),
-                        backgroundColor: stateColors['dialog_sl'],
-                        borderWidth: 0
-                    }, {
-                        label: 'Continue Listen',
-                        data: dialogTimeline.map(state => state === 'dialog_cl' ? 3 : 0),
-                        backgroundColor: stateColors['dialog_cl'],
-                        borderWidth: 0
-                    }, {
-                        label: 'Start Speak',
-                        data: dialogTimeline.map(state => state === 'dialog_ss' ? 2 : 0),
-                        backgroundColor: stateColors['dialog_ss'],
-                        borderWidth: 0
-                    }, {
-                        label: 'No Decision',
-                        data: dialogTimeline.map(state => state === 'no_decision' ? 1 : 0),
-                        backgroundColor: stateColors['no_decision'],
-                        borderWidth: 0
-                    }]
+                    labels: new Array(timelineLength).fill(''),
+                    datasets: [
+                        { label: 'Start Listen (SL)', data: [], backgroundColor: '#007bff' },
+                        { label: 'Continue Listen (CL)', data: [], backgroundColor: '#28a745' },
+                        { label: 'Start Speak (SS)', data: [], backgroundColor: '#dc3545' },
+                        { label: 'No Dialog Event', data: [], backgroundColor: '#e9ecef' }
+                    ]
                 },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    scales: {
-                        x: {
-                            stacked: true,
-                            display: false
-                        },
-                        y: {
-                            stacked: true,
-                            beginAtZero: true,
-                            max: 4,
-                            ticks: {
-                                stepSize: 1,
-                                callback: function(value) {
-                                    const states = ['', 'No Decision', 'SS', 'CL', 'SL'];
-                                    return states[value] || '';
-                                }
-                            }
-                        }
-                    },
-                    plugins: {
-                        legend: {
-                            display: true,
-                            position: 'top'
-                        }
-                    }
-                }
+                options: { responsive: true, maintainAspectRatio: false, scales: { x: { stacked: true, display: false }, y: { stacked: true, beginAtZero: true, max: 1, ticks: { display: false } } }, plugins: { legend: { display: true, position: 'top' } } }
             });
         }
 
-        // Enhanced dialog state queue management
-        function addToDialogStateQueue(newState) {
-            const isSignificant = newState !== 'no_decision';
-            
-            if (isSignificant) {
-                // Add significant state to queue with timestamp
-                dialogStateQueue.push({
-                    state: newState,
-                    timestamp: Date.now(),
-                    duration: 0
-                });
-                
-                // Keep only last 10 significant states to prevent memory buildup
-                if (dialogStateQueue.length > 10) {
-                    dialogStateQueue.shift();
-                }
-                
-                lastSignificantState = newState;
-                stateHoldDuration = minStateHoldTime; // Reset hold duration
-                
-                console.log(`Added significant state to queue: ${newState}, queue length: ${dialogStateQueue.length}`);
-            }
-        }
-
-        // Process dialog state queue for timeline display
-        function processDialogStateForTimeline() {
-            let stateToDisplay = 'no_decision';
-            
-            // Check if we should hold the last significant state
-            if (stateHoldDuration > 0) {
-                stateToDisplay = lastSignificantState;
-                stateHoldDuration--;
-            } else if (dialogStateQueue.length > 0) {
-                // Get the most recent significant state from queue
-                const recentState = dialogStateQueue[dialogStateQueue.length - 1];
-                
-                // If it's still fresh (within last 2 seconds), display it
-                if (Date.now() - recentState.timestamp < 2000) {
-                    stateToDisplay = recentState.state;
-                } else {
-                    // Clean up old states from queue
-                    dialogStateQueue = dialogStateQueue.filter(item => 
-                        Date.now() - item.timestamp < 5000 // Keep states for 5 seconds max
-                    );
-                }
-            }
-            
-            return stateToDisplay;
-        }
-
-        // Update timeline data with enhanced dialog state management
+        // Timeline Update Logic
         function updateTimeline() {
-            // Shift arrays left and add new data
+            // Update the instantaneous dialog state display with the event from the last interval
+            updateInstantaneousDialogState(dialogEventThisInterval);
+            // Update the non-latching SS trigger display
+            updateSSIndicator(ssCallbackEventThisInterval);
+
+            // Shift timeline arrays
             vadTimeline.shift();
-            vadTimeline.push(currentVadState);
-            
-            // Enhanced dialog timeline processing
             dialogTimeline.shift();
-            const displayState = processDialogStateForTimeline();
-            dialogTimeline.push(displayState);
+
+            // Push the event that was captured in the last interval, or null if no event occurred
+            vadTimeline.push(vadEventThisInterval);
+            dialogTimeline.push(dialogEventThisInterval);
+
+            // Reset the interval trackers for the next 100ms window
+            vadEventThisInterval = null;
+            dialogEventThisInterval = null;
+            ssCallbackEventThisInterval = false;
 
             // Update chart data
-            vadChart.data.datasets[0].data = [...vadTimeline];
-            vadChart.data.datasets[0].backgroundColor = vadTimeline.map(val => val ? '#28a745' : '#e9ecef');
+            vadChart.data.datasets[0].data = vadTimeline.map(v => v === true ? 1 : 0);
+            vadChart.data.datasets[1].data = vadTimeline.map(v => v === false ? 1 : 0);
+            vadChart.data.datasets[2].data = vadTimeline.map(v => v === null ? 1 : 0);
             vadChart.update('none');
 
-            // Update dialog chart datasets with processed timeline
-            dialogChart.data.datasets[0].data = dialogTimeline.map(state => state === 'dialog_sl' ? 4 : 0);
-            dialogChart.data.datasets[1].data = dialogTimeline.map(state => state === 'dialog_cl' ? 3 : 0);
-            dialogChart.data.datasets[2].data = dialogTimeline.map(state => state === 'dialog_ss' ? 2 : 0);
-            dialogChart.data.datasets[3].data = dialogTimeline.map(state => state === 'no_decision' ? 1 : 0);
+            dialogChart.data.datasets[0].data = dialogTimeline.map(s => s === 'dialog_sl' ? 1 : 0);
+            dialogChart.data.datasets[1].data = dialogTimeline.map(s => s === 'dialog_cl' ? 1 : 0);
+            dialogChart.data.datasets[2].data = dialogTimeline.map(s => s === 'dialog_ss' ? 1 : 0);
+            dialogChart.data.datasets[3].data = dialogTimeline.map(s => s === null ? 1 : 0);
             dialogChart.update('none');
         }
-
-        // Update status displays
+        
+        // UI Update Logic
         function updateStatusDisplay() {
-            // VAD status
+            // This function now only handles the latching VAD display
             vadStatus.textContent = currentVadState ? 'True' : 'False';
             vadIndicator.className = `status-indicator ${currentVadState ? 'status-active' : 'status-inactive'}`;
+        }
 
-            // Dialog SS status
-            genStatus.textContent = dialogSSTriggered ? 'Triggered' : 'False';
-            genIndicator.className = `status-indicator ${dialogSSTriggered ? 'status-generating' : 'status-inactive'}`;
+        function updateSSIndicator(isTriggered) {
+            // This function handles the non-latching SS trigger display
+            genStatus.textContent = isTriggered ? 'Triggered' : 'False';
+            genIndicator.className = `status-indicator ${isTriggered ? 'status-generating' : 'status-inactive'}`;
+        }
 
-            // Dialog state - always show current state for immediate feedback
-            const stateLabels = {
-                'dialog_sl': 'SL (Start Listen)',
-                'dialog_cl': 'CL (Continue Listen)', 
-                'dialog_ss': 'SS (Start Speak)',
-                'no_decision': 'No Decision'
-            };
-            
-            dialogState.textContent = stateLabels[currentDialogState] || currentDialogState;
-            dialogState.className = `dialog-state state-${currentDialogState}`;
-            
-            // Add queue status for debugging
-            if (dialogStateQueue.length > 0) {
-                const queueInfo = dialogStateQueue.map(item => item.state).join(', ');
-                console.log(`Dialog queue: [${queueInfo}], holding: ${lastSignificantState} for ${stateHoldDuration} more frames`);
+        function updateInstantaneousDialogState(state) {
+            // This function handles the non-latching dialog state display
+            const stateLabels = { 'dialog_sl': 'SL (Start Listen)', 'dialog_cl': 'CL (Continue Listen)', 'dialog_ss': 'SS (Start Speak)', 'no_decision': 'No Decision' };
+            const displayState = state || 'no_decision'; // If state is null, show 'no_decision'
+            dialogState.textContent = stateLabels[displayState] || displayState;
+            dialogState.className = `dialog-state state-${displayState}`;
+        }
+
+        function addEventToList(list, container, content, maxItems = 50) {
+            list.appendChild(content);
+            while (list.children.length > maxItems) {
+                list.removeChild(list.firstChild);
             }
+            setTimeout(() => container.scrollTop = container.scrollHeight, 10);
         }
 
-        // Auto-scroll function for event containers
-        function scrollToBottom(container) {
-            container.scrollTop = container.scrollHeight;
-        }
-
-        // Add event to IPU events list (append to bottom, chronological order)
         function addIPUEvent(eventType, timestamp) {
             const eventItem = document.createElement('div');
             eventItem.className = `event-item event-${eventType}`;
-            eventItem.innerHTML = `
-                <div><strong>${eventType.toUpperCase()}</strong></div>
-                <div class="event-time">${timestamp}</div>
-            `;
-            ipuEventsList.appendChild(eventItem);
-            
-            // Keep only last 50 events
-            while (ipuEventsList.children.length > 50) {
-                ipuEventsList.removeChild(ipuEventsList.firstChild);
-            }
-            
-            // Auto-scroll to bottom to show latest event
-            setTimeout(() => scrollToBottom(ipuEventsContainer), 10);
+            eventItem.innerHTML = `<div><strong>${eventType.toUpperCase()}</strong></div><div class="event-time">${timestamp}</div>`;
+            addEventToList(ipuEventsList, ipuEventsContainer, eventItem);
         }
 
-        // Add event to dialog state events list (append to bottom, chronological order)
-        function addDialogEvent(dialogState, timestamp) {
-            // Don't add "no_decision" to the event log
-            if (dialogState === 'no_decision') {
-                return;
-            }
-            
+        function addDialogEvent(state, timestamp) {
+            if (state === 'no_decision') return;
+            const stateNames = { 'dialog_sl': 'START LISTEN', 'dialog_cl': 'CONTINUE LISTEN', 'dialog_ss': 'START SPEAK' };
             const eventItem = document.createElement('div');
-            eventItem.className = `event-item event-${dialogState}`;
-            
-            // Get human-readable dialog state names for simplified system
-            const stateNames = {
-                'dialog_sl': 'START LISTEN',
-                'dialog_cl': 'CONTINUE LISTEN',
-                'dialog_ss': 'START SPEAK'
-            };
-            
-            eventItem.innerHTML = `
-                <div><strong>${stateNames[dialogState] || dialogState.toUpperCase()}</strong></div>
-                <div class="event-time">${timestamp}</div>
-            `;
-            dialogEventsList.appendChild(eventItem);
-            
-            // Keep only last 50 events
-            while (dialogEventsList.children.length > 50) {
-                dialogEventsList.removeChild(dialogEventsList.firstChild);
-            }
-            
-            // Auto-scroll to bottom to show latest event
-            setTimeout(() => scrollToBottom(dialogEventsContainer), 10);
+            eventItem.className = `event-item event-${state}`;
+            eventItem.innerHTML = `<div><strong>${stateNames[state] || state.toUpperCase()}</strong></div><div class="event-time">${timestamp}</div>`;
+            addEventToList(dialogEventsList, dialogEventsContainer, eventItem);
         }
 
-        // Add event to dialog SS callbacks list (append to bottom, chronological order)
         function addCallbackEvent(timestamp, contextInfo) {
             const eventItem = document.createElement('div');
             eventItem.className = 'event-item event-dialog_ss';
-            eventItem.innerHTML = `
-                <div><strong>DIALOG_SS CALLBACK</strong></div>
-                <div class="event-time">${timestamp}</div>
-                <div style="margin-top: 5px; font-size: 11px;">${contextInfo}</div>
-            `;
-            callbackEventsList.appendChild(eventItem);
-            
-            // Keep only last 20 events
-            while (callbackEventsList.children.length > 20) {
-                callbackEventsList.removeChild(callbackEventsList.firstChild);
-            }
-            
-            // Auto-scroll to bottom to show latest event
-            setTimeout(() => scrollToBottom(callbackEventsContainer), 10);
+            eventItem.innerHTML = `<div><strong>DIALOG_SS CALLBACK</strong></div><div class="event-time">${timestamp}</div><div style="margin-top: 5px; font-size: 11px;">${contextInfo}</div>`;
+            addEventToList(callbackEventsList, callbackEventsContainer, eventItem, 20);
         }
 
-        // Event listeners
-        startButton.addEventListener('click', startRecording);
-        stopButton.addEventListener('click', stopRecording);
-        sendTextButton.addEventListener('click', sendText);
-
-        // Initialize charts when page loads
-        window.addEventListener('load', () => {
-            initializeCharts();
-            updateStatusDisplay(); // Initialize display
-            // Update timeline every 100ms
-            setInterval(updateTimeline, 100);
-        });
-
+        // Recording Logic
         async function startRecording() {
-            if (audioContext) {
-                audioContext.close();
-            }
-            if (processor) {
-                processor.disconnect();
-            }
-
-            localStream = await navigator.mediaDevices.getUserMedia({ 
-                audio: {
-                    autoGainControl: false, 
-                    echoCancellation: true, 
-                    noiseSuppression: false, 
-                    latency: 0.001
-                } 
-            });
-
+            if (audioContext) audioContext.close();
+            if (processor) processor.disconnect();
+            localStream = await navigator.mediaDevices.getUserMedia({ audio: { autoGainControl: false, echoCancellation: true, noiseSuppression: false, latency: 0.001 } });
             audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: fixedSampleRate });
             const input = audioContext.createMediaStreamSource(localStream);
             processor = audioContext.createScriptProcessor(256, 1, 1);
-
             processor.onaudioprocess = (e) => {
                 if (!isRecording) return;
-
                 const inputData = e.inputBuffer.getChannelData(0);
-
                 const int16Array = new Int16Array(inputData.length);
-                for (let i = 0; i < inputData.length; i++) {
-                    int16Array[i] = inputData[i] * 0x7FFF;
-                }
-                socket.emit('audio', JSON.stringify({ 
-                    sample_rate: audioContext.sampleRate, 
-                    audio: Array.from(new Uint8Array(int16Array.buffer)) 
-                }));
+                for (let i = 0; i < inputData.length; i++) int16Array[i] = inputData[i] * 0x7FFF;
+                socket.emit('audio', JSON.stringify({ audio: Array.from(new Uint8Array(int16Array.buffer)) }));
                 drawWaveform(inputData, inputCtx);
             };
-
             input.connect(processor);
             processor.connect(audioContext.destination);
-
             isRecording = true;
             startButton.disabled = true;
             stopButton.disabled = false;
-
             socket.emit('recording-started');
         }
 
         function stopRecording() {
+            if (!isRecording) return;
             isRecording = false;
             localStream.getTracks().forEach(track => track.stop());
             startButton.disabled = false;
             stopButton.disabled = true;
-
             socket.emit('recording-stopped');
         }
 
         function sendText() {
             const text = textInput.value;
-            if (text.trim() !== "") {
-                socket.emit('prompt_text', text);
-            }
+            if (text.trim() !== "") socket.emit('prompt_text', text);
         }
 
         function drawWaveform(data, context) {
@@ -831,70 +440,46 @@
             context.stroke();
         }
 
-        // Socket event handlers
-        socket.on('too_many_users', (data) => {
-            alertBox.style.display = 'block';
-            setTimeout(() => alertBox.style.display = 'none', 5000);
+        // Event Listeners
+        startButton.addEventListener('click', startRecording);
+        stopButton.addEventListener('click', stopRecording);
+        sendTextButton.addEventListener('click', sendText);
+        window.addEventListener('load', () => {
+            initializeCharts();
+            updateStatusDisplay();
+            setInterval(updateTimeline, 100);
         });
 
-        socket.on('out_time', (data) => {
-            alertBox2.style.display = 'block';
-            setTimeout(() => alertBox2.style.display = 'none', 5000);
-        });
-
-        socket.on('prompt_success', (data) => {
-            alertBox3.style.display = 'block';
-            setTimeout(() => alertBox3.style.display = 'none', 3000);
-        });
-
-        // Socket events for state updates
+        // Socket.IO Handlers
         socket.on('state_update', (data) => {
             if (data.vad_state !== undefined) {
                 currentVadState = data.vad_state;
+                vadEventThisInterval = currentVadState;
             }
             if (data.dialog_state !== undefined) {
                 const previousDialogState = currentDialogState;
                 currentDialogState = data.dialog_state;
-                
-                // Add significant states to the queue for timeline preservation
-                addToDialogStateQueue(currentDialogState);
-                
-                // Add to dialog state event log if state changed (excluding no_decision)
-                if (previousDialogState !== currentDialogState) {
-                    const timestamp = new Date().toLocaleTimeString();
-                    addDialogEvent(currentDialogState, timestamp);
+                if (currentDialogState !== 'no_decision') {
+                    dialogEventThisInterval = currentDialogState;
                 }
-                
-                // Reset dialog SS trigger when state changes from dialog_ss
-                if (currentDialogState !== 'dialog_ss') {
-                    dialogSSTriggered = false;
+                if (previousDialogState !== currentDialogState && currentDialogState !== 'no_decision') {
+                    addDialogEvent(currentDialogState, new Date().toLocaleTimeString());
                 }
             }
+            // Only update the latching parts of the status display immediately
             updateStatusDisplay();
         });
 
-        // Socket events for IPU events
-        socket.on('ipu_event', (data) => {
-            const timestamp = new Date().toLocaleTimeString();
-            addIPUEvent(data.event_type, timestamp);
-        });
-
-        // Socket events for dialog SS callbacks
+        socket.on('ipu_event', (data) => addIPUEvent(data.event_type, new Date().toLocaleTimeString()));
         socket.on('dialog_ss_callback', (data) => {
-            const timestamp = new Date().toLocaleTimeString();
-            dialogSSTriggered = true;
-            updateStatusDisplay();
-            addCallbackEvent(timestamp, data.context_info || 'External LLM integration point');
+            ssCallbackEventThisInterval = true;
+            addCallbackEvent(new Date().toLocaleTimeString(), data.context_info || 'External LLM integration point');
         });
 
-        // Clear output waveform (disabled in this mode)
-        outputCtx.clearRect(0, 0, outputCanvas.width, outputCanvas.height);
-        outputCtx.fillStyle = '#e9ecef';
-        outputCtx.fillRect(0, 0, outputCanvas.width, outputCanvas.height);
-        outputCtx.fillStyle = '#6c757d';
-        outputCtx.font = '14px Arial';
-        outputCtx.textAlign = 'center';
-        outputCtx.fillText('Audio Output Disabled', outputCanvas.width/2, outputCanvas.height/2);
+        socket.on('too_many_users', () => { alertBox.style.display = 'block'; setTimeout(() => alertBox.style.display = 'none', 5000); });
+        socket.on('out_time', () => { alertBox2.style.display = 'block'; setTimeout(() => alertBox2.style.display = 'none', 5000); });
+        socket.on('prompt_success', () => { alertBox3.style.display = 'block'; setTimeout(() => alertBox3.style.display = 'none', 3000); });
+
     </script>
 </body>
 </html>
