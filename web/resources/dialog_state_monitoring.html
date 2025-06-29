@@ -401,7 +401,10 @@
                 const inputData = e.inputBuffer.getChannelData(0);
                 const int16Array = new Int16Array(inputData.length);
                 for (let i = 0; i < inputData.length; i++) int16Array[i] = inputData[i] * 0x7FFF;
-                socket.emit('audio', JSON.stringify({ audio: Array.from(new Uint8Array(int16Array.buffer)) }));
+                socket.emit('audio', JSON.stringify({ 
+                                                        sr: fixedSampleRate, 
+                                                        audio: Array.from(new Uint8Array(int16Array.buffer)) 
+                                                    }));
                 drawWaveform(inputData, inputCtx);
             };
             input.connect(processor);

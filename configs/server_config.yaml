@@ -5,12 +5,12 @@ connection:
   ip: "localhost" # From start_monitoring.sh, line 21
   port: "8765" # From start_monitoring.sh, line 22
   max_users: 1 # From start_monitoring.sh, line 23
-  session_timeout: 600 # From server_alt.py, line 40 (argparse default)
+  session_timeout: 10 # From server_alt.py, line 40 (argparse default)
   llm_exec_nums: 1 # From start_monitoring.sh, line 24
 
 
 audio:
-  fixed_sample_rate: 16000 # From dialog_state_monitoring.html, line 306
+  expected_sampling_rate: 16000 # From dialog_state_monitoring.html, line 306
   timeline_length: 100 # From dialog_state_monitoring.html, line 309
   event_log_max_items: 50 # From dialog_state_monitoring.html, line 402 (default in addEventToList)
 

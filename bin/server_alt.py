@@ -74,6 +74,8 @@ def custom_print(*args, **kwargs):
 
 # init parms
 configs = get_args()
+# Assumed audio sampling rate
+SAMPLING_RATE = configs['audio']['expected_sampling_rate']
 # max users to connect
 MAX_USERS = configs['connection']['max_users']
 # number of inference pipelines to use
@@ -114,8 +116,12 @@ class DialogStateParams:
             self.generate_outputs = None
             self.dialog_state_callback = None
             
+            # Timeout tracking
+            self.last_activity_time = time.time()
+
+
             self.feature_gater = AudioFeatureGating(
-                sample_rate=server_configs['audio']['fixed_sample_rate'],
+                sample_rate=server_configs['audio']['expected_sampling_rate'],
                 cache_history_size=server_configs['audio_feature_gating']['feature_gating_history_size'],
                 onset_input_chunk_cache_size=server_configs['audio_feature_gating']['onset_input_chunk_cache_size'],
                 fbank_config=server_configs['audio_feature_gating']['fbank']
@@ -137,7 +143,8 @@ class DialogStateParams:
             # Thread references
             self.pcm_thread = None
             self.vad_thread = None
-            
+            self.timeout_thread = None
+
             # Initialize context with system role
             self.reset_context()
             
@@ -245,6 +252,9 @@ def feature_gating_thread(sid):
         if(annotated_audio is None):
             continue
 
+        # Update last activity time upon receiving any annotated audio
+        user.last_activity_time = time.time()
+
         # print(f"Sid: {sid} Received annotated audio chunk with status: {annotated_audio['status']}, size: {len(annotated_audio['audio'])}")
 
 
@@ -280,7 +290,7 @@ def feature_gating_thread(sid):
 
     print(f"Sid: {sid} Stopping feature gating thread.")
 
-def process_pcm(sid):
+def predict_dialog_state(sid):
     """
     Main loop for processing gated audio and predicting dialog states.
     Uses VAD-provided labels to determine IPU boundaries.
@@ -335,6 +345,24 @@ def process_pcm(sid):
                 outputs = llm_prefill(feature_data, outputs, sid)
             else:
                 print(f"Sid: {sid} Warning: Received {feature_data['status']} without active IPU context")
+
+def timeout_monitor_thread(sid, timeout_seconds):
+    """
+    Monitors user activity and disconnects if the timeout is exceeded.
+    """
+    user = connected_users.get(sid)
+    if not user:
+        return
+
+    print(f"Sid: {sid} Starting timeout monitor with a {timeout_seconds}s timeout.")
+    while not user.stop_all_threads:
+        time.sleep(5) # Check every 5 seconds
+        if time.time() - user.last_activity_time > timeout_seconds:
+            print(f"Sid: {sid} has been inactive for more than {timeout_seconds} seconds. Disconnecting.")
+            disconnect_user(sid)
+            break
+    print(f"Sid: {sid} Stopping timeout monitor thread.")
+
 
 def llm_prefill(data, outputs, sid, is_first_pack=False):
     """
@@ -507,6 +535,15 @@ def handle_connect():
         # Send initial state
         emit_state_update(sid, vad_state=False, dialog_state='dialog_sl', generating=False)
         
+
+        # Start timeout monitor thread
+        timeout_thread = threading.Thread(target=timeout_monitor_thread, args=(sid, TIMEOUT))
+        timeout_thread.start()
+        connected_users[sid].timeout_thread = timeout_thread
+
+
+
+
         # Start standalone VAD thread if enabled
         if configs['vad']['use_standalone_vad']:
             print(f"User {sid}: Standalone VAD enabled, starting VAD thread.")
@@ -524,13 +561,15 @@ def handle_connect():
 
 
         # Start dialog state prediction thread
-        pcm_thread = threading.Thread(target=process_pcm, args=(sid,))
+        pcm_thread = threading.Thread(target=predict_dialog_state, args=(sid,))
         pcm_thread.start()
         connected_users[sid].pcm_thread = pcm_thread
         
         pipeline_pool.print_info()
         print(f'User {sid} connected successfully')
         
+        
+
         return True
         
     except Exception as e:
@@ -559,6 +598,8 @@ def handle_disconnect():
                 connected_users[sid].feature_gating_thread.join(timeout=2.0)
             if hasattr(connected_users[sid], 'vad_thread'):
                 connected_users[sid].vad_thread.join(timeout=2.0)
+            if hasattr(connected_users[sid], 'timeout_thread'):
+                connected_users[sid].timeout_thread.join(timeout=2.0)
             
             # Release resources
             connected_users[sid].release()
@@ -607,6 +648,10 @@ def handle_audio(data):
     if sid in connected_users:
         
         data = json.loads(data)
+
+        if(data['sr'] != SAMPLING_RATE):
+            raise ValueError(f"Expected audio sampling rate {SAMPLING_RATE}, but got {data['sr']}")
+
         audio_data = np.frombuffer(bytes(data['audio']), dtype=np.int16)
         
         # Put raw audio into the raw queue for VAD processing
@@ -624,6 +669,10 @@ def handle_annotated_audio(data):
     if sid in connected_users:
 
         data = json.loads(data)
+        
+        if(data['sr'] != SAMPLING_RATE):
+            raise ValueError(f"Expected audio sampling rate {SAMPLING_RATE}, but got {data['sr']}")
+        
         audio_data = np.frombuffer(bytes(data['audio']), dtype=np.int16)
         
         ## Normalize audio data to float32 range. Note that if standalone VAD is used, it will already be normalized and that's why there we directly put the audio data into the annotated audio queue
