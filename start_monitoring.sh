@@ -6,34 +6,35 @@ echo "🚀 Starting Enhanced Freeze-Omni Demo Server..."
 echo "📊 This version includes real-time state prediction visualization"
 echo ""
 
-# Check if required paths exist
-if [ ! -d "checkpoints" ]; then
-    echo "❌ Error: checkpoints directory not found"
-    echo "Please make sure you're running this from the Freeze-Omni root directory"
-    exit 1
-fi
+# Define the config file path
+CONFIG_FILE="/home/eeyifanshen/e2e_audio_LLM/dialog_turntaking_new/Freeze-Omni/configs/server_config.yaml"
+# LLM_PATH_FROM_CONFIG=$(grep 'llm_path:' $CONFIG_FILE | awk '{print $2}')
 
-if [ ! -d "Qwen2-7B-Instruct" ]; then
-    echo "❌ Error: Qwen2-7B-Instruct directory not found"
-    echo "Please make sure the LLM model is downloaded"
-    exit 1
-fi
 
-# Default parameters - adjust as needed
-MODEL_PATH="./checkpoints"
-LLM_PATH="./Qwen2-7B-Instruct"
-IP="localhost"
-PORT="8765"
-MAX_USERS=1
-llm_exec_nums=1 # Recommended to set to 1, requires about 15GB GPU memory per exec. Try setting a value greater than 1 on a better GPU to improve concurrency performance.
+# # Check if required paths exist
+# if [ ! -f "$CONFIG_FILE" ]; then
+#     echo "❌ Error: Config file not found at $CONFIG_FILE"
+#     exit 1
+# fi
 
-echo "🔧 Configuration:"
-echo "   Model Path: $MODEL_PATH"
-echo "   LLM Path: $LLM_PATH"
-echo "   Server IP: $IP"
-echo "   Server Port: $PORT"
-echo "   Max Users: $MAX_USERS"
+# if [ ! -d "checkpoints" ]; then
+#     echo "❌ Error: checkpoints directory not found"
+#     echo "Please make sure you're running this from the Freeze-Omni root directory"
+#     exit 1
+# fi
+
+# if [ ! -d "$LLM_PATH_FROM_CONFIG" ]; then
+#     echo "❌ Error: LLM directory '$LLM_PATH_FROM_CONFIG' not found"
+#     echo "Please make sure the LLM model is downloaded and path is correct in $CONFIG_FILE"
+#     exit 1
+# fi
+
+echo "🔧 Loading configuration from: $CONFIG_FILE"
 echo ""
+
+# Extract server info for display
+IP=$(grep 'ip:' $CONFIG_FILE | awk '{print $2}')
+PORT=$(grep 'port:' $CONFIG_FILE | awk '{print $2}')
 
 echo "🌐 Access URLs:"
 echo "   Monitoring dialogue state: https://$IP:$PORT/monitor"
@@ -45,11 +46,6 @@ echo ""
 
 
 # Start the server
-CUDA_VISIBLE_DEVICES=1 python bin/server_alt.py \
-    --llm_exec_nums $llm_exec_nums \
-    --model_path "$MODEL_PATH" \
-    --llm_path "$LLM_PATH" \
-    --ip "$IP" \
-    --port "$PORT" \
-    --max_users "$MAX_USERS" \
-    --use_standalone_vad
+# Note: model_path and llm_path are now primarily controlled by the config file.
+# You can still override them here with --model_path or --llm_path if needed.
+CUDA_VISIBLE_DEVICES=1 python bin/server_alt.py --config "$CONFIG_FILE"

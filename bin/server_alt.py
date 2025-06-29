@@ -33,20 +33,40 @@ from periphrals.AudioFeatureGating import AudioFeatureGating
 
 def get_args():
     parser = argparse.ArgumentParser(description='Freeze-Omni Dialog State Server')
-    parser.add_argument('--model_path', required=True, help='model_path to load')
-    parser.add_argument('--llm_path', required=True, help='llm_path to load')
-    parser.add_argument('--top_k', type=int, default=5)
-    parser.add_argument('--top_p', type=float, default=0.8)
-    parser.add_argument('--temperature', type=float, default=0.7)
-    parser.add_argument('--ip', required=True, help='ip of server')
-    parser.add_argument('--port', required=True, help='port of server')
-    parser.add_argument('--max_users', type=int, default=5)
-    parser.add_argument('--llm_exec_nums', type=int, default=1)
-    parser.add_argument('--timeout', type=int, default=600)
-    parser.add_argument('--use_standalone_vad', action='store_true', help='Initiate the standalone VAD thread. If not set, relies on external VAD input.')
+    # Keep essential paths as arguments, but most settings will move to YAML
+    parser.add_argument('--config', type=str, default='configs/server_config.yaml', help='Path to the server configuration YAML file.')
+    # parser.add_argument('--model_path', required=False, help='model_path to load (overrides config file)')
+    # parser.add_argument('--llm_path', required=False, help='llm_path to load (overrides config file)')
+
+    # parser.add_argument('--model_path', required=True, help='model_path to load')
+    # parser.add_argument('--llm_path', required=True, help='llm_path to load')
+    # parser.add_argument('--top_k', type=int, default=5)
+    # parser.add_argument('--top_p', type=float, default=0.8)
+    # parser.add_argument('--temperature', type=float, default=0.7)
+    # parser.add_argument('--ip', required=True, help='ip of server')
+    # parser.add_argument('--port', required=True, help='port of server')
+    # parser.add_argument('--max_users', type=int, default=5)
+    # parser.add_argument('--llm_exec_nums', type=int, default=1)
+    # parser.add_argument('--timeout', type=int, default=600)
+    # parser.add_argument('--use_standalone_vad', action='store_true', help='Initiate the standalone VAD thread. If not set, relies on external VAD input.')
+
     args = parser.parse_args()
-    print(args)
-    return args
+
+    # Load config from YAML file
+    with open(args.config, 'r') as f:
+        config = yaml.safe_load(f)
+
+    # # Command-line arguments override YAML settings
+    # if args.model_path:
+    #     # This assumes you will add model_path to your YAML, which is a good practice.
+    #     # For now, we add it to the config dictionary if provided via command line.
+    #     config['model_path'] = args.model_path
+    # if args.llm_path:
+    #     config['llm_path'] = args.llm_path
+
+    print("Configuration loaded:", json.dumps(config, indent=2))
+    return config
+
 
 def custom_print(*args, **kwargs):
     current_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
@@ -55,11 +75,11 @@ def custom_print(*args, **kwargs):
 # init parms
 configs = get_args()
 # max users to connect
-MAX_USERS = configs.max_users
+MAX_USERS = configs['connection']['max_users']
 # number of inference pipelines to use
-PIPELINE_NUMS = configs.llm_exec_nums
+PIPELINE_NUMS = configs['connection']['llm_exec_nums']
 # timeout to each user
-TIMEOUT = configs.timeout
+TIMEOUT = configs['connection']['session_timeout']
 
 # change print function to add time stamp
 original_print = builtins.print
@@ -76,8 +96,9 @@ connected_users = {}
 
 class DialogStateParams:
     """Simplified version focusing only on dialog state prediction without VAD"""
-    def __init__(self, pipeline_pool):
+    def __init__(self, pipeline_pool, server_configs):
         try:
+            self.server_configs = server_configs
             self.pipeline_pool = pipeline_pool
             self.pipeline_obj = self.pipeline_pool.acquire()
             if self.pipeline_obj is None:
@@ -85,7 +106,7 @@ class DialogStateParams:
                 
             # init default prompt
             init_outputs = self.pipeline_obj.pipeline_proc.speech_dialogue(None, stat='pre', 
-                                                                        role='You are a helpful voice assistant. Your answer should be coherent, natural, simple, complete. Your name is Xiao Yun. Your inventor is Tencent.')
+                                                                        role=server_configs['inference_control']['default_prompt'])
             self.system_role = deepcopy(init_outputs)
 
             
@@ -93,10 +114,21 @@ class DialogStateParams:
             self.generate_outputs = None
             self.dialog_state_callback = None
             
-            self.feature_gater = AudioFeatureGating(cache_history_size = 10, onset_input_chunk_cache_size = 6)
-            if configs.use_standalone_vad:
+            self.feature_gater = AudioFeatureGating(
+                sample_rate=server_configs['audio']['fixed_sample_rate'],
+                cache_history_size=server_configs['audio_feature_gating']['feature_gating_history_size'],
+                onset_input_chunk_cache_size=server_configs['audio_feature_gating']['onset_input_chunk_cache_size'],
+                fbank_config=server_configs['audio_feature_gating']['fbank']
+            )
+            if server_configs['vad']['use_standalone_vad']:
                 # Standalone VAD component
-                self.standalone_vad = PureVAD()
+                self.standalone_vad = PureVAD(
+                    min_silent_duration_second=server_configs['vad']['min_silent_duration_second'],
+                    speech_pad_second=server_configs['vad']['speech_pad_second'],
+                    vad_threshold=server_configs['vad']['vad_threshold'],
+                    cache_history_size=server_configs['vad']['vad_history_cache_chunk_cnt'],
+                    audio_chunk_size=self.feature_gater.expected_frames_per_audio_chunk,
+                )
                 
             # Control flags
             self.stop_all_threads = False
@@ -461,7 +493,7 @@ def handle_connect():
         
         # Initialize user parameters
         try:
-            connected_users[sid] = DialogStateParams(pipeline_pool)
+            connected_users[sid] = DialogStateParams(pipeline_pool, configs)
             print(f'User {sid} parameters initialized')
         except Exception as e:
             print(f'Failed to initialize parameters for user {sid}: {e}')
@@ -476,7 +508,7 @@ def handle_connect():
         emit_state_update(sid, vad_state=False, dialog_state='dialog_sl', generating=False)
         
         # Start standalone VAD thread if enabled
-        if configs.use_standalone_vad:
+        if configs['vad']['use_standalone_vad']:
             print(f"User {sid}: Standalone VAD enabled, starting VAD thread.")
             vad_thread = threading.Thread(target=standalone_vad_thread, args=(sid,))
             vad_thread.start()
@@ -612,4 +644,4 @@ if __name__ == "__main__":
     key_file = "web/resources/key.pem"
     if not os.path.exists(cert_file) or not os.path.exists(key_file):
         generate_self_signed_cert(cert_file, key_file)
-    socketio.run(app, host=configs.ip, port=configs.port, ssl_context=(cert_file, key_file))
+    socketio.run(app, host=configs['connection']['ip'], port=int(configs['connection']['port']), ssl_context=(cert_file, key_file))

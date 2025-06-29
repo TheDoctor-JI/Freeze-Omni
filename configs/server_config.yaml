@@ -1,0 +1,43 @@
+model_path: "/home/eeyifanshen/e2e_audio_LLM/dialog_turntaking_new/Freeze-Omni/checkpoints"
+llm_path: "/home/eeyifanshen/e2e_audio_LLM/dialog_turntaking_new/Freeze-Omni/Qwen2-7B-Instruct"
+
+connection:
+  ip: "localhost" # From start_monitoring.sh, line 21
+  port: "8765" # From start_monitoring.sh, line 22
+  max_users: 1 # From start_monitoring.sh, line 23
+  session_timeout: 600 # From server_alt.py, line 40 (argparse default)
+  llm_exec_nums: 1 # From start_monitoring.sh, line 24
+
+
+audio:
+  fixed_sample_rate: 16000 # From dialog_state_monitoring.html, line 306
+  timeline_length: 100 # From dialog_state_monitoring.html, line 309
+  event_log_max_items: 50 # From dialog_state_monitoring.html, line 402 (default in addEventToList)
+
+
+vad:
+  use_standalone_vad: true # From start_monitoring.sh, line 48 (flag is present)
+  vad_threshold: 0.8 # From PureVAD.py, line 16
+  min_silent_duration_second: 0.3 # From PureVAD.py, line 17 (300ms)
+  speech_pad_second: 0.03 # From PureVAD.py, line 18 (30ms)
+  vad_history_cache_chunk_cnt: 10 # From PureVAD.py, line 10
+
+
+audio_feature_gating:
+  feature_gating_history_size: 10 # From AudioFeatureGating.py, line 14
+  onset_input_chunk_cache_size: 6 # From AudioFeatureGating.py, line 15
+
+  fbank:
+    expected_audio_chunk_duration_in_sec: 0.16 ## 160ms
+    feat_dim: 80 # From AudioFeatureGating.py, line 10
+    audio_to_proc_per_step_in_sec: 0.025 ##25ms
+    step_size_in_sec: 0.01 ## 10ms
+    context_duration_in_sec: 0.03 ## 30ms overlap for each input chunk
+
+
+inference_control:
+  top_k: 5 # From server_alt.py, line 35 (argparse default)
+  top_p: 0.8 # From server_alt.py, line 36 (argparse default)
+  temperature: 0.7 # From server_alt.py, line 37 (argparse default)
+  default_prompt: "You are a helpful voice assistant. Your answer should be coherent, natural, simple, complete. Your name is Xiao Yun. Your inventor is Tencent." # From server_alt.py, line 90
+  

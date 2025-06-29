@@ -9,15 +9,15 @@ class inferencePipeline():
     def __init__(self, args):
         self.args = args
 
-        with open(self.args.model_path + "/audiollm/train.yaml", 'r') as fin:
+        with open(self.args['model_path'] + "/audiollm/train.yaml", 'r') as fin:
             configs = yaml.safe_load(fin)
-            configs['cmvn_file'] = self.args.model_path + "/audiollm/global_cmvn"
-            configs['model_conf']['llm_path'] = self.args.llm_path
+            configs['cmvn_file'] = self.args['model_path'] + "/audiollm/global_cmvn"
+            configs['model_conf']['llm_path'] = self.args['llm_path']
 
         # Init asr model from configs
         self.model = init_encoder_llm(configs)
         
-        load_checkpoint(self.model, self.args.model_path + "/audiollm/final.pt")
+        load_checkpoint(self.model, self.args['model_path'] + "/audiollm/final.pt")
         device = torch.device('cuda')
         self.model = self.model.to(device)
         self.model.eval()
@@ -42,9 +42,9 @@ class inferencePipeline():
                 feats_lengths = None
 
             extra_inputs = {}
-            extra_inputs['top_p'] = self.args.top_p
-            extra_inputs['top_k'] = self.args.top_k
-            extra_inputs['temperature'] = self.args.temperature
+            extra_inputs['top_p'] = self.args['inference_control']['top_p']
+            extra_inputs['top_k'] = self.args['inference_control']['top_k']
+            extra_inputs['temperature'] = self.args['inference_control']['temperature']
             extra_inputs['past_key_values'] = past_key_values
             extra_inputs['stat'] = stat##Current dialogue state
             extra_inputs['last_id'] = last_id
