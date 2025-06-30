@@ -112,7 +112,7 @@
             text-align: center;
             margin: 5px 0;
         }
-        .state-dialog_sl { background: #007bff; color: white; }
+        .state-dialog_el { background: #007bff; color: white; }
         .state-dialog_cl { background: #28a745; color: white; }
         .state-dialog_ss { background: #dc3545; color: white; }
         .state-no_decision { background: #6c757d; color: white; }
@@ -147,7 +147,7 @@
         .event-ipu_sl { border-left-color: #28a745; }
         .event-ipu_cl { border-left-color: #007bff; }
         .event-ipu_el { border-left-color: #dc3545; }
-        .event-dialog_sl { border-left-color: #007bff; }
+        .event-dialog_el { border-left-color: #007bff; }
         .event-dialog_cl { border-left-color: #28a745; }
         .event-dialog_ss { border-left-color: #dc3545; }
         .event-time { color: #6c757d; font-size: 10px; }
@@ -293,7 +293,7 @@
                 data: {
                     labels: new Array(timelineLength).fill(''),
                     datasets: [
-                        { label: 'Start Listen (SL)', data: [], backgroundColor: '#007bff' },
+                        { label: 'End Listen (EL)', data: [], backgroundColor: '#007bff' },
                         { label: 'Continue Listen (CL)', data: [], backgroundColor: '#28a745' },
                         { label: 'Start Speak (SS)', data: [], backgroundColor: '#dc3545' },
                         { label: 'No Dialog Event', data: [], backgroundColor: '#e9ecef' }
@@ -329,7 +329,7 @@
             vadChart.data.datasets[2].data = vadTimeline.map(v => v === null ? 1 : 0);
             vadChart.update('none');
 
-            dialogChart.data.datasets[0].data = dialogTimeline.map(s => s === 'dialog_sl' ? 1 : 0);
+            dialogChart.data.datasets[0].data = dialogTimeline.map(s => s === 'dialog_el' ? 1 : 0);
             dialogChart.data.datasets[1].data = dialogTimeline.map(s => s === 'dialog_cl' ? 1 : 0);
             dialogChart.data.datasets[2].data = dialogTimeline.map(s => s === 'dialog_ss' ? 1 : 0);
             dialogChart.data.datasets[3].data = dialogTimeline.map(s => s === null ? 1 : 0);
@@ -351,7 +351,7 @@
 
         function updateInstantaneousDialogState(state) {
             // This function handles the non-latching dialog state display
-            const stateLabels = { 'dialog_sl': 'SL (Start Listen)', 'dialog_cl': 'CL (Continue Listen)', 'dialog_ss': 'SS (Start Speak)', 'no_decision': 'No Decision' };
+            const stateLabels = { 'dialog_el': 'EL (End Listen)', 'dialog_cl': 'CL (Continue Listen)', 'dialog_ss': 'SS (Start Speak)', 'no_decision': 'No Decision' };
             const displayState = state || 'no_decision'; // If state is null, show 'no_decision'
             dialogState.textContent = stateLabels[displayState] || displayState;
             dialogState.className = `dialog-state state-${displayState}`;
@@ -374,7 +374,7 @@
 
         function addDialogEvent(state, timestamp) {
             if (state === 'no_decision') return;
-            const stateNames = { 'dialog_sl': 'START LISTEN', 'dialog_cl': 'CONTINUE LISTEN', 'dialog_ss': 'START SPEAK' };
+            const stateNames = { 'dialog_el': 'END LISTEN', 'dialog_cl': 'CONTINUE LISTEN', 'dialog_ss': 'START SPEAK' };
             const eventItem = document.createElement('div');
             eventItem.className = `event-item event-${state}`;
             eventItem.innerHTML = `<div><strong>${stateNames[state] || state.toUpperCase()}</strong></div><div class="event-time">${timestamp}</div>`;
@@ -486,4 +486,3 @@
 
     </script>
 </body>
-</html>

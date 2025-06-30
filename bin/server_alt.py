@@ -107,13 +107,14 @@ class DialogStateParams:
                 raise Exception("Failed to get pipeline object from pool")
                 
             # init default prompt
-            init_outputs = self.pipeline_obj.pipeline_proc.speech_dialogue(None, stat='pre', 
+            _, init_key_values, _, _, _ = self.pipeline_obj.pipeline_proc.speech_dialogue(None, identity = '', status='pre', 
                                                                         role=server_configs['inference_control']['default_prompt'])
-            self.system_role = deepcopy(init_outputs)
+            self.system_role = deepcopy(init_key_values)
 
             
             # Dialog state prediction context
-            self.generate_outputs = None
+            self.caches = {} # Holds caches for 'user' and 'system'
+            self.past_key_values = None
             self.dialog_state_callback = None
             
             # Timeout tracking
@@ -171,7 +172,23 @@ class DialogStateParams:
             if hasattr(self, 'standalone_vad'):
                 self.standalone_vad.reset()
                 
-            self.generate_outputs = deepcopy(self.system_role)#Initially or upon reset, only contains a system prompt
+
+            #Initially or upon reset, only contains a system prompt
+            self.past_key_values = deepcopy(self.system_role)
+
+            # Reset caches for both user and system
+            self.caches = {
+                'user': {
+                    'encoder_cache': None,
+                    'adapter_cache': None,
+                    'pe_index': 0,
+                },
+                'system': {
+                    'encoder_cache': None,
+                    'adapter_cache': None,
+                    'pe_index': 0,
+                }
+            }
 
         except Exception as e:
             print(f"Error resetting context: {e}")
@@ -272,6 +289,7 @@ def feature_gating_thread(sid):
                 # We need to send them one by one.
                 for i, feature in enumerate(gated_feature_data['feature_last_chunk']):
                     feature_item = {
+                        'identity': 'user',##Hardcode for now
                         'feature': feature,
                         'status': 'ipu_sl' if i == 0 else 'ipu_cl'##Treat the first input chunk in the history as the start of the IPU, despite the fact that the IPU is detected at the current chunk.
                     }
@@ -279,12 +297,14 @@ def feature_gating_thread(sid):
                 
                 # The current chunk becomes 'ipu_cl' as it follows the cached start.
                 feature_item = {
+                    'identity': 'user',##Hardcode for now
                     'feature': gated_feature_data['feature'],
                     'status': 'ipu_cl' if len(gated_feature_data['feature_last_chunk']) > 0 else 'ipu_sl'##Treat the current chunk as the continuation of the IPU, although the VAD only detects it here, if we are sending context input chunks
                 }
                 user.processed_pcm_queue.put(feature_item)
             else:
                 # For 'ipu_cl' and 'ipu_el', just forward the data.
+                gated_feature_data['identity'] = 'user'  # Hardcode identity for now    
                 user.processed_pcm_queue.put(gated_feature_data)
 
 
@@ -299,10 +319,7 @@ def predict_dialog_state(sid):
     - sid (str): Session ID
     """
     print(f"Sid: {sid} Starting dialog state prediction thread")
-    
-    # Local outputs variable for current IPU processing
-    outputs = None
-    
+        
     while True:
 
         time.sleep(0.01)
@@ -316,35 +333,10 @@ def predict_dialog_state(sid):
         if feature_data is None:
             continue
             
-        print(f"Sid: {sid} Processing approved audio for dialog state prediction, status: {feature_data['status']}")
+        print(f"Sid: {sid} Processing approved audio for dialog state prediction, status: {feature_data['status']}, identity: {feature_data.get('identity', 'N/A')}")
         
-        # Handle IPU start - create fresh context snapshot
-        if feature_data['status'] == 'ipu_sl':
-            print(f"Sid: {sid} IPU start detected - creating context snapshot")
-            
-            # Create snapshot of current context from shared memory (just like original server)
-            outputs = deepcopy(connected_users[sid].generate_outputs)
-            outputs['adapter_cache'] = None
-            outputs['encoder_cache'] = None
-            outputs['pe_index'] = 0
-            outputs['stat'] = 'dialog_sl'
-            outputs['last_id'] = None
-            
-            # Clean up any existing text/hidden state
-            if 'text' in outputs:
-                del outputs['text']
-            if 'hidden_state' in outputs:
-                del outputs['hidden_state']
-            
-            # Process the first chunk
-            outputs = llm_prefill(feature_data, outputs, sid, is_first_pack=True)
-        
-        # Handle continuing or ending chunks
-        elif feature_data['status'] in ['ipu_cl', 'ipu_el']:
-            if outputs is not None:  # Only process if we have an active IPU context
-                outputs = llm_prefill(feature_data, outputs, sid)
-            else:
-                print(f"Sid: {sid} Warning: Received {feature_data['status']} without active IPU context")
+        # Always run forward processing
+        llm_prefill(feature_data, sid)
 
 def timeout_monitor_thread(sid, timeout_seconds):
     """
@@ -363,71 +355,66 @@ def timeout_monitor_thread(sid, timeout_seconds):
             break
     print(f"Sid: {sid} Stopping timeout monitor thread.")
 
-def llm_prefill(data, outputs, sid, is_first_pack=False):
+def llm_prefill(data, sid):
     """
-    Simplified LLM prefill for dialog state prediction only.
-    Uses VAD-provided status labels to handle different chunk types.
+    Processes an audio chunk to update the shared conversational context.
+    If the chunk is from the user, it also predicts dialog state probabilities.
     
     Parameters:
-    - data (dict): Audio chunk data with features and VAD status
-    - outputs (dict): Current conversation context
-    - sid (str): Session ID
-    - is_first_pack (bool): Whether this is the first pack in an IPU
-    
-    Returns:
-    - outputs (dict): Updated conversation context
+    - data (dict): Audio chunk data with features, status, and identity.
+    - sid (str): Session ID.
     """
     
-    print(f"Sid: {sid} Processing audio chunk with status: {data['status']}")
+    user = connected_users[sid]
+    identity = data['identity']
     
-    # Handle different VAD statuses
-    if data['status'] == 'ipu_sl':
-        # Stage1: start listen
-        print(f"Sid: {sid} Start listening to new IPU.")
-        outputs = connected_users[sid].pipeline_obj.pipeline_proc.speech_dialogue(
-            torch.tensor(data['feature']), **outputs)
     
-    elif data['status'] == 'ipu_el':
-        # VAD detected speech end - process final chunk
-        print(f"Sid: {sid} VAD end detected - processing final chunk.")
-        outputs = connected_users[sid].pipeline_obj.pipeline_proc.speech_dialogue(
-            torch.tensor(data['feature']), **outputs)
+    # print(f"Sid: {sid} Processing audio chunk with status: {data['status']} from {identity}")
     
-    elif data['status'] == 'ipu_cl':
-        # Continue listening
-        print(f"Sid: {sid} within IPU - processing chunks.")
-        outputs = connected_users[sid].pipeline_obj.pipeline_proc.speech_dialogue(
-                torch.tensor(data['feature']), **outputs)
-        
-        # Force dialog_cl state for first pack (like original server)
-        if is_first_pack:
-            outputs['stat'] = 'dialog_cl'
-    
-    # Emit state update
-    emit_state_update(sid, dialog_state=outputs.get('stat'))
-    
-    # Handle state transitions (no VAD state changes needed)
-    if outputs['stat'] == 'dialog_cl':
-        print(f"Sid: {sid} Dialog state: continue listening")
-        
-    elif outputs['stat'] == 'dialog_el':
-        print(f"Sid: {sid} Dialog state: end listening (no response)")
-        # Update shared memory to preserve this interaction
-        connected_users[sid].generate_outputs = deepcopy(outputs)
-        
-    elif outputs['stat'] == 'dialog_ss':
-        print(f"Sid: {sid} Dialog state: start preparing response")
-        # Update shared memory with current context
-        connected_users[sid].generate_outputs = deepcopy(outputs)
-        
-        # Trigger external callback if set
-        if connected_users[sid].dialog_state_callback:
-            connected_users[sid].dialog_state_callback(sid, deepcopy(outputs))
-    
-        # Reset to the sl state -- otherwise the LLM will start to decode utterances.
-        outputs['stat'] = 'dialog_sl'
 
-    return outputs
+    # 1. Assemble the context for this processing step
+    outputs = {
+        'past_key_values': user.past_key_values, # Shared conversational history
+        'identity': identity,
+        'status': data['status'],
+        **user.caches[identity] # Identity-specific caches (encoder, adapter, pe_index)
+    }
+
+
+
+    # 2. Call the pipeline
+    prediction_probs, past_key_values, cnn_cache, buffer, pe_index = user.pipeline_obj.pipeline_proc.speech_dialogue(
+        torch.tensor(data['feature']), **outputs
+    )
+
+
+    # 3. Update the shared and identity-specific contexts
+    user.past_key_values = past_key_values # Update shared history
+    user.caches[identity] = { # Update identity-specific caches
+        'encoder_cache': buffer,
+        'adapter_cache': cnn_cache,
+        'pe_index': pe_index
+    }
+    
+
+    # 4. Handle prediction results if the input was from the user
+    if identity == 'user' and prediction_probs is not None:
+
+        threshold = configs['dialog_state_decision']['threshold']
+
+        # Check if the system should start generating a new response
+        if prediction_probs["state_1"] > threshold:
+            emit_state_update(sid, vad_state=False, dialog_state='dialog_ss')
+            # print(f"Sid: {sid} Dialog state: start preparing response")
+            
+            # Trigger external callback if set
+            if user.dialog_state_callback:
+                user.dialog_state_callback(sid)
+        elif prediction_probs["state_2"] > threshold:
+            emit_state_update(sid, vad_state=False, dialog_state='dialog_el')
+            # print(f"Sid: {sid} Dialog state: continue listening")
+        else:
+            emit_state_update(sid, vad_state=True, dialog_state='dialog_cl')
 
 def disconnect_user(sid):
     """Disconnect user and cleanup resources"""
@@ -438,33 +425,19 @@ def disconnect_user(sid):
         time.sleep(3)
         del connected_users[sid]
 
-def dialog_ss_callback(sid, context):
+def dialog_ss_callback(sid):
     """
     Callback function called when dialog_ss state is predicted.
     
     Parameters:
     - sid (str): Session ID
-    - context (dict): Current conversation context
     """
-    print(f"Dialog SS callback triggered for user {sid}")
-    print(f"Context keys: {context.keys()}")
-    
-    # Prepare context info for the GUI
-    context_info = "External LLM integration point"
-    if 'past_tokens' in context and context['past_tokens']:
-        tokenizer = connected_users[sid].pipeline_obj.pipeline_proc.model.tokenizer
-        conversation_text = tokenizer.decode(context['past_tokens'], skip_special_tokens=True)
-        print(f"Conversation so far: {conversation_text}")
-        context_info = f"Context length: {len(context['past_tokens'])} tokens"
-    
+    # print(f"Dialog SS callback triggered for user {sid}")
+
     # Emit dialog_ss callback event to GUI
-    emit_dialog_ss_callback(sid, context_info)
+    context = ''
+    emit_dialog_ss_callback(sid, context)
     
-    # TODO: Integrate with your external LLM here
-    # external_llm_response = your_external_llm.generate(context)
-    
-    # After external LLM finishes, you would update the context:
-    # connected_users[sid].generate_outputs = updated_context_from_external_llm
 
 def emit_state_update(sid, vad_state=None, dialog_state=None, generating=None):
     """Emit state updates to the GUI"""
@@ -531,9 +504,7 @@ def handle_connect():
         # Set callback for dialog_ss events
         connected_users[sid].set_dialog_callback(dialog_ss_callback)
         
-        # Send initial state
-        emit_state_update(sid, vad_state=False, dialog_state='dialog_sl', generating=False)
-        
+
 
         # Start timeout monitor thread
         timeout_thread = threading.Thread(target=timeout_monitor_thread, args=(sid, TIMEOUT))
@@ -617,7 +588,6 @@ def handle_recording_started():
     if sid in connected_users:
         # Reset VAD, feature gater, and context
         connected_users[sid].reset_context()
-        emit_state_update(sid, vad_state=False, dialog_state='dialog_sl')
     else:
         disconnect()
     print('Recording started')

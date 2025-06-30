@@ -17,6 +17,7 @@ from models.adapter import *
 
 IGNORE_ID = -1
 
+
 class AudioLLM(torch.nn.Module):
     def __init__(
         self,
@@ -56,7 +57,9 @@ class AudioLLM(torch.nn.Module):
     ):
         super().__init__()
 
-        self.encoder =  encoder
+        self.encoder_user = encoder
+        self.encoder_system = copy.deepcopy(encoder)
+        
         self.llm_decoder = AutoModelForCausalLM.from_pretrained(llm_path, 
                                                     torch_dtype="auto",
                                                     trust_remote_code=True)
@@ -106,11 +109,11 @@ class AudioLLM(torch.nn.Module):
             chat_template = chat_template.split('<audio>')
             chat_prefix = chat_template[0].split('<|im_end|>')
             chat_role = chat_prefix[0] + '<|im_end|>'
-            self.chat_template['role'] = self.tokenizer(
+            self.chat_template['role_prompt'] = self.tokenizer(
                         [chat_role], return_tensors="pt")['input_ids']
-            self.chat_template['prefix'] = self.tokenizer(
+            self.chat_template['prefix_for_user_utterance'] = self.tokenizer(
                         [chat_prefix[1]], return_tensors="pt")['input_ids']
-            self.chat_template['suffix'] = self.tokenizer(
+            self.chat_template['prefix_for_system_utterance'] = self.tokenizer(
                         [chat_template[1]], return_tensors="pt")['input_ids']
         else:
             self.chat_template = None
@@ -147,15 +150,17 @@ class AudioLLM(torch.nn.Module):
             )
 
         if adpter_type == 'cnn':
-            self.adpter = CNNAdapter(enc_out_dim, llm_embed_dim, kernel_size)
+            self.adpter_user = CNNAdapter(enc_out_dim, llm_embed_dim, kernel_size)
         elif adpter_type == 'linear':
-            self.adpter = LinearAdapter(enc_out_dim, llm_embed_dim)
+            self.adpter_user = LinearAdapter(enc_out_dim, llm_embed_dim)
         elif adpter_type == 'subsampling':
-            self.adpter = CNNSubsampling(enc_out_dim, llm_embed_dim, 
+            self.adpter_user = CNNSubsampling(enc_out_dim, llm_embed_dim, 
                                         kernel_size, activation_func, norm)
-        
+        self.adpter_system = copy.deepcopy(self.adpter_user)
+
+
         self.task_embeddings = torch.nn.Embedding(task_num, llm_embed_dim)
-        if task_type == 'prefix':
+        if task_type == 'prefix_for_user_utterance':
             self.prefix_embeddings = nn.ModuleList(
                     [
                         torch.nn.ModuleList(
@@ -183,13 +188,21 @@ class AudioLLM(torch.nn.Module):
                 self.prefix_ids = torch.Tensor([i for i in range(prefix_num)]).long()
 
         if self.freeze_encoder:
-            self.encoder.eval()
-            for (name, param) in self.encoder.named_parameters():
+            self.encoder_user.eval()
+            self.encoder_system.eval()
+            for (name, param) in self.encoder_user.named_parameters():
                 param.requires_grad = False
+            for (name, param) in self.encoder_system.named_parameters():
+                param.requires_grad = False
+
         if self.freeze_adpter:
-            self.adpter.eval()
-            for (name, param) in self.adpter.named_parameters():
+            self.adpter_user.eval()
+            self.adpter_system.eval()
+            for (name, param) in self.adpter_user.named_parameters():
                 param.requires_grad = False
+            for (name, param) in self.adpter_system.named_parameters():
+                param.requires_grad = False
+
 
         if self.predict_usr_state:
             self.predictor_head = torch.nn.Linear(llm_embed_dim, predict_usr_state)
@@ -216,15 +229,15 @@ class AudioLLM(torch.nn.Module):
         # Ensure 'past_key_values' does not exist in extra_inputs, raise an exception if it does
         assert extra_inputs.get('past_key_values', None) is None, "past key values already exist!!!"
         
-        # If 'role' key is present in extra_inputs, use that role as the chat prefix
-        if extra_inputs.get('role', None) is not None:
+        # If 'role_prompt' key is present in extra_inputs, use that role as the chat prefix
+        if extra_inputs.get('role_prompt', None) is not None:
             ## <|im_start|>system\n[PROMPT CONTENT]
             
-            chat_prefix = self.tokenizer([extra_inputs['role']], 
+            chat_prefix = self.tokenizer([extra_inputs['role_prompt']], 
                 return_tensors="pt")['input_ids'].to('cuda')  # Convert role to tokens and move to CUDA device
         else:
-            # If no 'role' is provided, use the default chat template and remove the last token (<|im_end|>)
-            chat_prefix = self.chat_template['role'][:, :-1].to('cuda')
+            # If no 'role_prompt' is provided, use the default chat template and remove the last token (<|im_end|>)
+            chat_prefix = self.chat_template['role_prompt'][:, :-1].to('cuda')
         
         # Use the LLM decoder's word embedding layer to convert the chat prefix into embeddings
         inputs_embeds = self.llm_decoder.transformer.wte(chat_prefix)
@@ -241,7 +254,7 @@ class AudioLLM(torch.nn.Module):
 
         # Call the _generate_one_step method to generate one step output, including past_key_values, etc.
         # The main purpose here is to get the system role and prompts encoded.
-        _, past_key_values, stat, _ = self._generate_one_step(
+        _, past_key_values, _ = self._generate_one_step(
                                                 copy.deepcopy(inputs), "dialog_sl")
                                                 
         # Return the generated past_key_values
@@ -256,98 +269,77 @@ class AudioLLM(torch.nn.Module):
         ## At the beginning, past_key_values will only contain system role/prompt
         assert extra_inputs.get('past_key_values', None) is not None, "must set system role first!!!"
 
+        identity = extra_inputs['identity']
+        status = extra_inputs['status']
+
         buffer = extra_inputs.get('encoder_cache', None)
         cnn_cache = extra_inputs.get('adapter_cache', None)
         pe_index = extra_inputs.get('pe_index', 0)
 
-        ## This stat is the current dialog state of the system, not of the user audio chunk
-        if extra_inputs['stat'] == 'dialog_sl' or extra_inputs['stat'] == 'dialog_cl':
-            # Encoder
-            
-            if buffer is None:
-                buffer = [None] * self.encoder.enc[1].num_blocks
-            
-            encoder_out, buffer, _, _, pe_index = self.encoder.infer(speech, buffer, 
-                                                                    0, None, pe_index)
 
-            encoder_mask = torch.full(encoder_out.shape[:2], True).unsqueeze(1
-                                                            ).to(encoder_out.device)
-
-            # adapter
-            inputs_embeds, encoder_mask, cnn_cache = self.adpter(encoder_out, encoder_mask, 
-                                            cache=cnn_cache, return_cache=True) # 1, T, D
-
-            attention_mask = encoder_mask.squeeze(1) # 1, T
-
-            ## If the state is listening to user input, we use the adapter-encoder pipeline to create input embeddings from audio inputs
+        # 1. Identity-Based Selection of Encoder/Adapter
+        if identity == 'user':
+            current_encoder = self.encoder_user
+            current_adapter = self.adpter_user
+        else: # 'system'
+            current_encoder = self.encoder_system
+            current_adapter = self.adpter_system
 
 
-        # prompt
-        if extra_inputs['stat'] == 'dialog_sl':
-            if self.prompt_finetune:
-                prompt_ids = self.prompt_ids.repeat(1, 1).to(inputs_embeds.device)
-                prompt_embeds = self.prompt_embeddings(
-                                    prompt_ids.to(inputs_embeds.device)) # B, 5, D
-                prompt_mask = torch.full(prompt_ids.shape, 
-                                    True).to(inputs_embeds.device) # B, 5
-                
-                if self.add_prompt_before:
-                    inputs_embeds = torch.cat((prompt_embeds, inputs_embeds), 1) # B, (T+5), D
-                    attention_mask = torch.cat((prompt_mask, attention_mask), 1) # B, (T+5)
 
-        # chat mode
-        if self.chat_template is not None:
-            ## Apply chat template. In listening state, the user input grows. In speaking state, the system decoded tokens grows. Different template (special tokens) are used to segregate user input and system decoded tokens which get input to the model autoregressively.
-            if extra_inputs['stat'] == 'dialog_sl':
-                ## Note that this prefix to human audio will not contain the |<im_end>| token. This is to be added in the subsequent assistant response
-                chat_prefix = self.chat_template['prefix'].to(
-                                                    inputs_embeds.device)## <|im_end|>\n<|im_start|>user\n
-                chat_prefix = torch.cat((torch.tensor([[self.tokenizer.eod_id]]
-                                    ).to(inputs_embeds.device), chat_prefix), 1)
-                chat_prefix_embeds = self.llm_decoder.transformer.wte(chat_prefix)
-                chat_prefix_mask = torch.full(chat_prefix.shape, 
-                                True).to(inputs_embeds.device)
-                inputs_embeds = torch.cat((chat_prefix_embeds, inputs_embeds), 1)
-                attention_mask = torch.cat((chat_prefix_mask, attention_mask), 1)
-            if extra_inputs['stat'] == 'dialog_ss':
-                chat_suffix = self.chat_template['suffix'].to('cuda')## <|im_end|>\n<|im_start|>assistant\n
-                chat_suffix_embeds = self.llm_decoder.transformer.wte(chat_suffix)
-                chat_suffix_mask = torch.full(chat_suffix.shape, True).to('cuda')
-                inputs_embeds = chat_suffix_embeds
-                attention_mask = chat_suffix_mask
+
+        # 2. Process audio through selected Encoder and Adapter
+        # Encoder
+        if buffer is None:
+            buffer = [None] * current_encoder.enc[1].num_blocks
         
-        ## The form of input differs depending on what input signal we have (what state we are in).
-        if extra_inputs['stat'] != 'dialog_cs':#If system is not speaking, then the input should be input embeddings from user audio
-            inputs = {
-                'inputs_embeds': inputs_embeds.half(),
-                'attention_mask': attention_mask,
-            }
-        else:# If system is speaking, then the input should be the last token id decoded by the model
-            attention_mask = torch.full([1, 1], True).to('cuda')
-            inputs = {
-                'input_ids': extra_inputs['last_id'],
-                'attention_mask': attention_mask
-            }
+        encoder_out, buffer, _, _, pe_index = current_encoder.infer(speech, buffer, 
+                                                                0, None, pe_index)
+        encoder_mask = torch.full(encoder_out.shape[:2], True).unsqueeze(1
+                                                        ).to(encoder_out.device)
 
-        # add kv cache, i.e., context from previous steps integrating both user input and system output
+        # Adapter
+        inputs_embeds, encoder_mask, cnn_cache = current_adapter(encoder_out, encoder_mask, 
+                                        cache=cnn_cache, return_cache=True) # 1, T, D
+        attention_mask = encoder_mask.squeeze(1) # 1, T
+
+
+
+
+        # 3. Event-Based Chat Template Application
+        if self.chat_template is not None and status == 'ipu_sl':
+            ## Apply chat template.
+            if identity == 'user':
+                chat_prefix_tokens = self.chat_template['prefix_for_user_utterance'].to(inputs_embeds.device)
+                chat_prefix_tokens = torch.cat((torch.tensor([[self.tokenizer.eod_id]]).to(inputs_embeds.device), chat_prefix_tokens), 1)## chat_prefix_tokens = <|im_end|>\n<|im_start|>user\n
+            elif identity == 'system':
+                chat_prefix_tokens = self.chat_template['prefix_for_system_utterance'].to('cuda')## <|im_end|>\n<|im_start|>assistant\n
+            else:
+                raise ValueError(f"Unknown identity: {identity}. Must be 'user' or 'system'.")
+
+            chat_prefix_embeds = self.llm_decoder.transformer.wte(chat_prefix_tokens)
+            chat_prefix_mask = torch.full(chat_prefix_tokens.shape, 
+                            True).to(inputs_embeds.device)
+            inputs_embeds = torch.cat((chat_prefix_embeds, inputs_embeds), 1)
+            attention_mask = torch.cat((chat_prefix_mask, attention_mask), 1)
+
+        # 4. Prepare inputs for the LLM
+        inputs = {
+            'inputs_embeds': inputs_embeds.half(),
+            'attention_mask': attention_mask,
+        }
+
+
+        # Add kv cache, i.e., context from previous steps integrating both user input and system output
         inputs['past_key_values'] = extra_inputs['past_key_values']
-        past_mask = torch.full([1, inputs['past_key_values'][0][0].size(2)],
-                                True).to('cuda')
+        past_mask = torch.full([1, inputs['past_key_values'][0][0].size(2)],True).to('cuda')
         attention_mask = torch.cat((past_mask, attention_mask), 1)
         inputs['attention_mask'] = attention_mask
 
-        top_p = extra_inputs.get('top_p', 1.0)
-        top_k = extra_inputs.get('top_k', 0)
-        temperature = extra_inputs.get('temperature', 1.0)
-
         ## This is where we actually run forward inference.
-        last_id, past_key_values, stat, hidden_state = self._generate_one_step(copy.deepcopy(inputs), 
-                                                extra_inputs['stat'],
-                                                top_p=top_p, 
-                                                top_k=top_k,
-                                                temperature=temperature)
-
-        return last_id, stat, past_key_values, cnn_cache, buffer, pe_index, hidden_state
+        prediction_probs, past_key_values, _ = self._generate_one_step(copy.deepcopy(inputs), identity=identity)
+                                                
+        return prediction_probs, past_key_values, cnn_cache, buffer, pe_index
     
     def _post_decode(self, output, temperature=1.0, top_k=0, top_p=0.0):
         """
@@ -397,60 +389,37 @@ class AudioLLM(torch.nn.Module):
         token_index = torch.multinomial(probs, 1)
         return token_index.unsqueeze(0)
     
-    def _generate_one_step(
-        self,
-        inputs,
-        stat,
-        top_p: float = 1.0,
-        top_k: int = 0,
-        temperature: float = 1.0,
-    ):
+    def _generate_one_step( self, inputs, identity):
         """
         Generates the model's next output based on the current input and state.
 
         Parameters:
         - inputs: The input tensor containing the model's input data.
-        - stat: The current state information used to control the generation process.
-        - top_p: The threshold for controlling top-p sampling.
-        - top_k: The threshold for controlling top-k sampling.
-        - temperature: Controls the randomness of sampling.
+        - identity: The identity of the speaker ('user' or 'system').
 
         Returns:
-        - last_id: The index of the last generated token.
-        - stat: The updated state information.
-        - past_key_values: The model's historical key-value pairs, used for cross-step memory.
-        - hidden_state: The model's hidden state, used to maintain cross-step contextual information.
+        - prediction_probs: A dictionary with state probabilities if identity is 'user', otherwise None.
+        - past_key_values: The model's historical key-value pairs.
+        - hidden_state: The model's last hidden state.
         """
+
         ##Note that this forward pass automatically update the past_key_values to be the most updated, i.e., the state used in this decoding step
         outputs = self.llm_decoder.model(**inputs)
-        if stat == 'dialog_sl' or stat == 'dialog_cl':## While listening, we further use the predictor head to update dialogue state based on the last layer's hidden state output. Note that in this case the last_id output is set to None because we do not use the projection head to generate a new token
+        prediction_probs = None
+
+        # Prediction head is only used for user input to decide if the system should speak.
+        if identity == 'user' and self.predictor_head is not None:
             state_logits = self.predictor_head(
                         outputs['last_hidden_state'])[0, :]
             prob = F.softmax(state_logits[:, :-1])
             state_prob = prob[-1].clone()
-            state_1 = state_prob[1]
-            state_2 = state_prob[2]
-            print("State 1 prob: {:.4f}, State 2 prob: {:.4f}".format(state_1.item(), state_2.item()))
 
-            if state_2 > 0.5:
-                ## 'dialog_el' indicates that the model thinks the user has ended speech, but won't start generating
-                return None, outputs['past_key_values'], 'dialog_el', None
-            if state_1 > 0.5:
-                ## 'dialog_ss' indicates that the model thinks the user has ended speech, and the model will start generating
-                return None, outputs['past_key_values'], 'dialog_ss', None
-
-            ## 'dialog_cl' indicates that the model thinks the user is still speaking, and the model will continue to listen
-            return None, outputs['past_key_values'], 'dialog_cl', None
-
-        ## While generating, then we generate a new token
-        last_logit = self.llm_decoder.lm_head(outputs['last_hidden_state'][:, -1:, :])
-        last_id = self._post_decode(last_logit, temperature=temperature, top_k=top_k, top_p=top_p)
-        return_tts_state = outputs['last_hidden_state'][:, -1:, :]
+            prediction_probs = {
+                "state_1": state_prob[1].item(), # Probability to start generating new responses
+                "state_2": state_prob[2].item()  # Probability that user finished
+            }
+            print("State 1 prob: {:.4f}, State 2 prob: {:.4f}".format(prediction_probs["state_1"], prediction_probs["state_2"]))
 
 
-        if last_id[0][0] == self.tokenizer.eod_id:
-            ## Generation complete, go back to listening state
-            return None, outputs['past_key_values'], 'dialog_sl', return_tts_state
-        else:
-            ##Generation continues, return the last token id and past key values. dialog_cs indicates that the model is still generating text
-            return last_id, outputs['past_key_values'], 'dialog_cs', return_tts_state
+        # We only update context (past_key_values), no token generation. If it's not user input, we just return the past_key_values but do not return prediction_probs.
+        return prediction_probs, outputs['past_key_values'], outputs['last_hidden_state']
