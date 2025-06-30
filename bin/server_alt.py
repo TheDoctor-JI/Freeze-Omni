@@ -121,29 +121,48 @@ class DialogStateParams:
             self.last_activity_time = time.time()
 
 
-            self.feature_gater = AudioFeatureGating(
-                sample_rate=server_configs['audio']['expected_sampling_rate'],
-                cache_history_size=server_configs['audio_feature_gating']['feature_gating_history_size'],
-                onset_input_chunk_cache_size=server_configs['audio_feature_gating']['onset_input_chunk_cache_size'],
-                fbank_config=server_configs['audio_feature_gating']['fbank']
-            )
-            if server_configs['vad']['use_standalone_vad']:
-                # Standalone VAD component
-                self.standalone_vad = PureVAD(
-                    min_silent_duration_second=server_configs['vad']['min_silent_duration_second'],
-                    speech_pad_second=server_configs['vad']['speech_pad_second'],
-                    vad_threshold=server_configs['vad']['vad_threshold'],
-                    cache_history_size=server_configs['vad']['vad_history_cache_chunk_cnt'],
-                    audio_chunk_size=self.feature_gater.expected_frames_per_audio_chunk,
+            self.feature_gater = {
+                'user': AudioFeatureGating(
+                    sample_rate=server_configs['audio']['expected_sampling_rate'],
+                    cache_history_size=server_configs['audio_feature_gating']['feature_gating_history_size'],
+                    onset_input_chunk_cache_size=server_configs['audio_feature_gating']['onset_input_chunk_cache_size'],
+                    fbank_config=server_configs['audio_feature_gating']['fbank']
+                ),
+                'system': AudioFeatureGating(
+                    sample_rate=server_configs['audio']['expected_sampling_rate'],
+                    cache_history_size=server_configs['audio_feature_gating']['feature_gating_history_size'],
+                    onset_input_chunk_cache_size=server_configs['audio_feature_gating']['onset_input_chunk_cache_size'],
+                    fbank_config=server_configs['audio_feature_gating']['fbank']
                 )
-                
+            }
+
+            if server_configs['vad']['use_standalone_vad']:
+                self.standalone_vad = {
+                    'user': PureVAD(
+                        min_silent_duration_second=server_configs['vad']['min_silent_duration_second'],
+                        speech_pad_second=server_configs['vad']['speech_pad_second'],
+                        vad_threshold=server_configs['vad']['vad_threshold'],
+                        cache_history_size=server_configs['vad']['vad_history_cache_chunk_cnt'],
+                        audio_chunk_size=self.feature_gater['user'].expected_frames_per_audio_chunk,
+                    ),
+                    'system': PureVAD(
+                        min_silent_duration_second=server_configs['vad']['min_silent_duration_second'],
+                        speech_pad_second=server_configs['vad']['speech_pad_second'],
+                        vad_threshold=server_configs['vad']['vad_threshold'],
+                        cache_history_size=server_configs['vad']['vad_history_cache_chunk_cnt'],
+                        audio_chunk_size=self.feature_gater['system'].expected_frames_per_audio_chunk,
+                    )
+                }
+
+
             # Control flags
             self.stop_all_threads = False
             
 
             # Thread references
             self.pcm_thread = None
-            self.vad_thread = None
+            self.vad_threads = {}
+            self.feature_gating_threads = {}
             self.timeout_thread = None
 
             # Initialize context with system role
@@ -159,18 +178,28 @@ class DialogStateParams:
         """Reset the conversation context"""
         try:
 
-            # Audio queues
-            self.raw_pcm_queue = PCMQueue()  # Raw audio chunk annotated with IPU status
-            self.annotated_audio_queue = ProcPCMQueue()  # Annotated audio from VAD
-            self.processed_pcm_queue = ProcPCMQueue()  # Gated audio features
+            # Audio queues for user and system separately
+            self.raw_pcm_queue = {
+                'user': PCMQueue(),
+                'system': PCMQueue()
+            }
+            self.annotated_audio_queue = {
+                'user': ProcPCMQueue(),
+                'system': ProcPCMQueue()
+            }
+            ## Main queue for dialog state predicting, input is sequentialized
+            self.processed_pcm_queue = ProcPCMQueue()
 
 
-            # Reset feature gater state
+            # Reset feature gater state for both
             if hasattr(self, 'feature_gater'):
-                self.feature_gater.reset()
+                self.feature_gater['user'].reset()
+                self.feature_gater['system'].reset()
 
+            # Reset VAD state for both
             if hasattr(self, 'standalone_vad'):
-                self.standalone_vad.reset()
+                self.standalone_vad['user'].reset()
+                self.standalone_vad['system'].reset()
                 
 
             #Initially or upon reset, only contains a system prompt
@@ -211,59 +240,58 @@ class DialogStateParams:
         except Exception as e:
             print(f"Error releasing resources: {e}")
 
-def standalone_vad_thread(sid):
+def standalone_vad_thread(sid, identity):
     """
-    Standalone VAD thread that consumes raw audio, annotates it, and puts it
-    into the annotated_audio_queue.
+    Standalone VAD thread that consumes raw audio for a specific identity,
+    annotates it, and puts it into the corresponding annotated_audio_queue.
     """
     user = connected_users[sid]
-    chunk_size = user.standalone_vad.get_chunk_size()
-    print(f"Sid: {sid} Starting standalone VAD thread with chunk size: {chunk_size}")
+    chunk_size = user.standalone_vad[identity].get_chunk_size()
+    print(f"Sid: {sid} Starting standalone VAD thread for '{identity}' with chunk size: {chunk_size}")
     
     while not user.stop_all_threads:
 
         time.sleep(0.01)
 
-        audio_chunk = user.raw_pcm_queue.get(chunk_size)
+        audio_chunk = user.raw_pcm_queue[identity].get(chunk_size)
         if audio_chunk is None:
             continue
 
         # print(f"Sid: {sid} Received raw audio chunk of size: {len(audio_chunk)}")
             
         # Run VAD prediction to get annotated audio
-        annotated_audio = user.standalone_vad.predict(audio_chunk)
+        annotated_audio = user.standalone_vad[identity].predict(audio_chunk)
         
-        # Emit VAD events for monitoring GUI
+        # Emit VAD events for monitoring GUI (only for user)
         status = annotated_audio['status']
         if status == 'ipu_sl':
-            emit_vad_event(sid, status)
-            emit_state_update(sid, vad_state=True)
+            emit_vad_event(sid, status, identity=identity)
+            emit_state_update(sid, vad_state=True, identity=identity)
         elif status == 'ipu_el':
-            emit_vad_event(sid, status)
-            emit_state_update(sid, vad_state=False)
+            emit_vad_event(sid, status, identity=identity)
+            emit_state_update(sid, vad_state=False,  identity=identity)
         elif status == 'ipu_cl':
-            emit_state_update(sid, vad_state=True)
+            emit_state_update(sid, vad_state=True,  identity=identity)
 
         # Put annotated audio into the queue for the feature gating thread
-        user.annotated_audio_queue.put(annotated_audio)
+        user.annotated_audio_queue[identity].put(annotated_audio)
 
-    print(f"Sid: {sid} Stopping standalone VAD thread")
+    print(f"Sid: {sid} Stopping standalone VAD thread for '{identity}'")
 
-def feature_gating_thread(sid):
+def feature_gating_thread(sid, identity):
     """
-    This thread gets annotated audio, computes fbank features for all of it
-    to maintain state, and gates the features for IPU-related chunks to the
-    main processing thread.
+    This thread gets annotated audio for a specific identity, computes fbank features,
+    and gates the features to the shared processing thread.
     """
     user = connected_users[sid]
-    print(f"Sid: {sid} Starting feature gating thread.")
+    print(f"Sid: {sid} Starting feature gating thread for '{identity}'.")
 
     while not user.stop_all_threads:
 
         time.sleep(0.01)
         
-        # Get annotated audio chunk
-        annotated_audio = user.annotated_audio_queue.get()
+        # Get annotated audio chunk for the specific identity
+        annotated_audio = user.annotated_audio_queue[identity].get()
         
 
         if(annotated_audio is None):
@@ -276,39 +304,33 @@ def feature_gating_thread(sid):
 
 
         # Process chunk to extract and gate features
-        gated_feature_data = user.feature_gater.process_and_gate(annotated_audio)
+        gated_feature_data = user.feature_gater[identity].process_and_gate(annotated_audio)
         
         # If the feature gater returns data, put it in the processed queue for the LLM to process.
         if gated_feature_data:
+            # Set the identity for this chunk
+            gated_feature_data['identity'] = identity
             
-            # print(f"Sid: {sid} Approved annotated audio chunk with status: {annotated_audio['status']}, size: {len(annotated_audio['audio'])}")
-
-            # For speech start, the original logic sends cached chunks separately.
             if gated_feature_data['status'] == 'ipu_sl':
-                # The 'feature_last_chunk' contains the features of chunks not belonging to the current IPU
-                # We need to send them one by one.
                 for i, feature in enumerate(gated_feature_data['feature_last_chunk']):
                     feature_item = {
-                        'identity': 'user',##Hardcode for now
+                        'identity': identity,
                         'feature': feature,
-                        'status': 'ipu_sl' if i == 0 else 'ipu_cl'##Treat the first input chunk in the history as the start of the IPU, despite the fact that the IPU is detected at the current chunk.
+                        'status': 'ipu_sl' if i == 0 else 'ipu_cl'
                     }
                     user.processed_pcm_queue.put(feature_item)
                 
-                # The current chunk becomes 'ipu_cl' as it follows the cached start.
                 feature_item = {
-                    'identity': 'user',##Hardcode for now
+                    'identity': identity,
                     'feature': gated_feature_data['feature'],
-                    'status': 'ipu_cl' if len(gated_feature_data['feature_last_chunk']) > 0 else 'ipu_sl'##Treat the current chunk as the continuation of the IPU, although the VAD only detects it here, if we are sending context input chunks
+                    'status': 'ipu_cl' if len(gated_feature_data['feature_last_chunk']) > 0 else 'ipu_sl'
                 }
                 user.processed_pcm_queue.put(feature_item)
             else:
-                # For 'ipu_cl' and 'ipu_el', just forward the data.
-                gated_feature_data['identity'] = 'user'  # Hardcode identity for now    
                 user.processed_pcm_queue.put(gated_feature_data)
 
 
-    print(f"Sid: {sid} Stopping feature gating thread.")
+    print(f"Sid: {sid} Stopping feature gating thread for '{identity}'.")
 
 def predict_dialog_state(sid):
     """
@@ -404,17 +426,17 @@ def llm_prefill(data, sid):
 
         # Check if the system should start generating a new response
         if prediction_probs["state_1"] > threshold:
-            emit_state_update(sid, vad_state=False, dialog_state='dialog_ss')
+            emit_state_update(sid, dialog_state='dialog_ss')
             # print(f"Sid: {sid} Dialog state: start preparing response")
             
             # Trigger external callback if set
             if user.dialog_state_callback:
                 user.dialog_state_callback(sid)
         elif prediction_probs["state_2"] > threshold:
-            emit_state_update(sid, vad_state=False, dialog_state='dialog_el')
+            emit_state_update(sid, dialog_state='dialog_el')
             # print(f"Sid: {sid} Dialog state: continue listening")
         else:
-            emit_state_update(sid, vad_state=True, dialog_state='dialog_cl')
+            emit_state_update(sid, dialog_state='dialog_cl')
 
 def disconnect_user(sid):
     """Disconnect user and cleanup resources"""
@@ -438,25 +460,24 @@ def dialog_ss_callback(sid):
     context = ''
     emit_dialog_ss_callback(sid, context)
     
-
-def emit_state_update(sid, vad_state=None, dialog_state=None, generating=None):
+def emit_state_update(sid, vad_state=None, dialog_state=None, generating=None, identity = None):
     """Emit state updates to the GUI"""
     if sid in connected_users:
         state_data = {}
         if vad_state is not None:
             state_data['vad_state'] = vad_state
+            state_data['identity'] = identity 
         if dialog_state is not None:
             state_data['dialog_state'] = dialog_state
         if generating is not None:
             state_data['generating'] = generating
-        
         if state_data:
             socketio.emit('state_update', state_data, to=sid)
 
-def emit_vad_event(sid, event_type):
+def emit_vad_event(sid, event_type, identity = None):
     """Emit VAD events to the GUI"""
     if sid in connected_users:
-        socketio.emit('ipu_event', {'event_type': event_type}, to=sid)
+        socketio.emit('ipu_event', {'event_type': event_type, 'identity': identity}, to=sid)
 
 def emit_dialog_ss_callback(sid, context_info):
     """Emit dialog_ss callback events to the GUI"""
@@ -512,22 +533,21 @@ def handle_connect():
         connected_users[sid].timeout_thread = timeout_thread
 
 
-
-
-        # Start standalone VAD thread if enabled
-        if configs['vad']['use_standalone_vad']:
-            print(f"User {sid}: Standalone VAD enabled, starting VAD thread.")
-            vad_thread = threading.Thread(target=standalone_vad_thread, args=(sid,))
-            vad_thread.start()
-            connected_users[sid].vad_thread = vad_thread
-        else:
-            print(f"User {sid}: Standalone VAD disabled, relying on external VAD input via /annotated_audio endpoint.")
-        
-        
-        # Start feature gating thread
-        feature_gating_thread_obj = threading.Thread(target=feature_gating_thread, args=(sid,))
-        feature_gating_thread_obj.start()
-        connected_users[sid].feature_gating_thread = feature_gating_thread_obj
+        # Start threads for both 'user' and 'system' identities
+        for identity in ['user', 'system']:
+            # Start standalone VAD thread if enabled
+            if configs['vad']['use_standalone_vad']:
+                print(f"User {sid}: Standalone VAD enabled, starting VAD thread for '{identity}'.")
+                vad_thread = threading.Thread(target=standalone_vad_thread, args=(sid, identity))
+                vad_thread.start()
+                connected_users[sid].vad_threads[identity] = vad_thread
+            else:
+                print(f"User {sid}: Standalone VAD disabled for '{identity}', relying on external VAD input.")
+            
+            # Start feature gating thread
+            feature_gating_thread_obj = threading.Thread(target=feature_gating_thread, args=(sid, identity))
+            feature_gating_thread_obj.start()
+            connected_users[sid].feature_gating_threads[identity] = feature_gating_thread_obj
 
 
         # Start dialog state prediction thread
@@ -564,10 +584,13 @@ def handle_disconnect():
             # Wait for threads to finish
             if hasattr(connected_users[sid], 'pcm_thread'):
                 connected_users[sid].pcm_thread.join(timeout=2.0)
-            if hasattr(connected_users[sid], 'feature_gating_thread'):
-                connected_users[sid].feature_gating_thread.join(timeout=2.0)
-            if hasattr(connected_users[sid], 'vad_thread'):
-                connected_users[sid].vad_thread.join(timeout=2.0)
+            
+            for identity in ['user', 'system']:
+                if identity in connected_users[sid].feature_gating_threads:
+                    connected_users[sid].feature_gating_threads[identity].join(timeout=2.0)
+                if identity in connected_users[sid].vad_threads:
+                    connected_users[sid].vad_threads[identity].join(timeout=2.0)
+
             if hasattr(connected_users[sid], 'timeout_thread'):
                 connected_users[sid].timeout_thread.join(timeout=2.0)
             
@@ -611,52 +634,81 @@ def handle_prompt_text(text):
     else:
         disconnect()
 
-@socketio.on('audio')
-def handle_audio(data):
+@socketio.on('user_raw_audio')
+def handle_user_raw_audio(data):
     sid = request.sid
     if sid in connected_users:
-        
         data = json.loads(data)
-
         if(data['sr'] != SAMPLING_RATE):
             raise ValueError(f"Expected audio sampling rate {SAMPLING_RATE}, but got {data['sr']}")
         if(data['enc'] != 's16le'):
             raise ValueError(f"Expected audio encoding 's16le', but got {data['enc']}")
-
         
-        ## Normalize audio data to float32 range. Most modern platform are little endian
         audio_data = np.frombuffer(bytes(data['audio']), dtype=np.int16)
-        connected_users[sid].raw_pcm_queue.put(audio_data.astype(np.float32) / 32768.0) #Send to VAD
+        connected_users[sid].raw_pcm_queue['user'].put(audio_data.astype(np.float32) / 32768.0)
     else:
         disconnect()
 
-@socketio.on('annotated_audio')
-def handle_annotated_audio(data):
+
+@socketio.on('system_raw_audio')
+def handle_system_raw_audio(data):
+    sid = request.sid
+    if sid in connected_users:
+        data = json.loads(data)
+        if(data['sr'] != SAMPLING_RATE):
+            raise ValueError(f"Expected audio sampling rate {SAMPLING_RATE}, but got {data['sr']}")
+        if(data['enc'] != 's16le'):
+            raise ValueError(f"Expected audio encoding 's16le', but got {data['enc']}")
+        
+        audio_data = np.frombuffer(bytes(data['audio']), dtype=np.int16)
+        connected_users[sid].raw_pcm_queue['system'].put(audio_data.astype(np.float32) / 32768.0)
+    else:
+        disconnect()
+
+@socketio.on('user_annotated_audio')
+def handle_user_annotated_audio(data):
     """
-    New endpoint for receiving audio chunks already annotated with VAD status.
-    Expected data format: {'audio': bytes, 'status': 'ipu_cl' | 'ipu_sl' | 'ipu_el' | null}
+    Endpoint for receiving user audio chunks already annotated with VAD status.
     """
     sid = request.sid
     if sid in connected_users:
-
         data = json.loads(data)
-        
         if(data['sr'] != SAMPLING_RATE):
             raise ValueError(f"Expected audio sampling rate {SAMPLING_RATE}, but got {data['sr']}")
         if(data['enc'] != 's16le'):
             raise ValueError(f"Expected audio encoding 's16le', but got {data['enc']}")
 
-
-        ## Normalize audio data to float32 range. Note that if standalone VAD is used, it will already be normalized and that's why there we directly put the audio data into the annotated audio queue
-        ## Most modern platform are little endian
         audio_data = np.frombuffer(bytes(data['audio']), dtype=np.int16)
         annotated_chunk = {
             "audio": audio_data.astype(np.float32) / 32768.0,
             "status": data.get('status')
         }
         
-        # Put annotated audio into the queue for the feature gating thread
-        connected_users[sid].annotated_audio_queue.put(annotated_chunk)
+        connected_users[sid].annotated_audio_queue['user'].put(annotated_chunk)
+    else:
+        disconnect()
+
+
+@socketio.on('system_annotated_audio')
+def handle_system_annotated_audio(data):
+    """
+    Endpoint for receiving system audio chunks already annotated with VAD status.
+    """
+    sid = request.sid
+    if sid in connected_users:
+        data = json.loads(data)
+        if(data['sr'] != SAMPLING_RATE):
+            raise ValueError(f"Expected audio sampling rate {SAMPLING_RATE}, but got {data['sr']}")
+        if(data['enc'] != 's16le'):
+            raise ValueError(f"Expected audio encoding 's16le', but got {data['enc']}")
+
+        audio_data = np.frombuffer(bytes(data['audio']), dtype=np.int16)
+        annotated_chunk = {
+            "audio": audio_data.astype(np.float32) / 32768.0,
+            "status": data.get('status')
+        }
+        
+        connected_users[sid].annotated_audio_queue['system'].put(annotated_chunk)
     else:
         disconnect()
 

@@ -304,8 +304,6 @@ class AudioLLM(torch.nn.Module):
         attention_mask = encoder_mask.squeeze(1) # 1, T
 
 
-
-
         # 3. Event-Based Chat Template Application
         if self.chat_template is not None and status == 'ipu_sl':
             ## Apply chat template.
