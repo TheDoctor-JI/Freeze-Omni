@@ -29,7 +29,7 @@ from web.pem import generate_self_signed_cert
 from web.queue import PCMQueue, ProcPCMQueue, ThreadSafeQueue
 from periphrals.PureVAD import PureVAD
 from periphrals.AudioFeatureGating import AudioFeatureGating
-
+from periphrals.ContextSerializer import ContextSerializer
 
 def get_args():
     parser = argparse.ArgumentParser(description='Freeze-Omni Dialog State Server')
@@ -155,6 +155,10 @@ class DialogStateParams:
                 }
 
 
+            # Initialize context serializer
+            self.context_serializer = ContextSerializer()
+
+
             # Control flags
             self.stop_all_threads = False
             
@@ -164,6 +168,7 @@ class DialogStateParams:
             self.vad_threads = {}
             self.feature_gating_threads = {}
             self.timeout_thread = None
+            self.context_serializer_thread = None
 
             # Initialize context with system role
             self.reset_context()
@@ -200,6 +205,11 @@ class DialogStateParams:
             if hasattr(self, 'standalone_vad'):
                 self.standalone_vad['user'].reset()
                 self.standalone_vad['system'].reset()
+
+
+            # Reset context serializer
+            if hasattr(self, 'context_serializer'):
+                self.context_serializer.reset()
                 
 
             #Initially or upon reset, only contains a system prompt
@@ -311,19 +321,24 @@ def feature_gating_thread(sid, identity):
             # Set the identity for this chunk
             gated_feature_data['identity'] = identity
             
+            if 'timestamp' in annotated_audio:
+                gated_feature_data['timestamp'] = annotated_audio['timestamp']
+            
             if gated_feature_data['status'] == 'ipu_sl':
                 for i, feature in enumerate(gated_feature_data['feature_last_chunk']):
                     feature_item = {
                         'identity': identity,
                         'feature': feature,
-                        'status': 'ipu_sl' if i == 0 else 'ipu_cl'
+                        'status': 'ipu_sl' if i == 0 else 'ipu_cl',
+                        'timestamp': gated_feature_data.get('timestamp', time.time())##For these overbleed features from the last chunk, just set the time stamp to be the same as the current chunk
                     }
                     user.processed_pcm_queue.put(feature_item)
                 
                 feature_item = {
                     'identity': identity,
                     'feature': gated_feature_data['feature'],
-                    'status': 'ipu_cl' if len(gated_feature_data['feature_last_chunk']) > 0 else 'ipu_sl'
+                    'status': 'ipu_cl' if len(gated_feature_data['feature_last_chunk']) > 0 else 'ipu_sl',
+                    'timestamp': gated_feature_data.get('timestamp', time.time())
                 }
                 user.processed_pcm_queue.put(feature_item)
             else:
@@ -331,6 +346,30 @@ def feature_gating_thread(sid, identity):
 
 
     print(f"Sid: {sid} Stopping feature gating thread for '{identity}'.")
+
+def context_serializer_thread(sid):
+    """
+    Context serializer thread that takes features from both user and system gated queues,
+    serializes them based on timestamps, and outputs to the processed_pcm_queue.
+    """
+    user = connected_users[sid]
+    print(f"Sid: {sid} Starting context serializer thread.")
+    
+    while not user.stop_all_threads:
+        time.sleep(0.01)
+        
+        # Get features from both queues
+        user_feature = user.gated_feature_queue['user'].get_nowait()
+        system_feature = user.gated_feature_queue['system'].get_nowait()
+        
+        # Process serialization if we have any features
+        if user_feature is not None or system_feature is not None:
+            next_aud_feature_to_proc = user.context_serializer.resolve(user_feature, system_feature)
+            if next_aud_feature_to_proc is not None:
+                user.processed_pcm_queue.put(next_aud_feature_to_proc)
+    
+    print(f"Sid: {sid} Stopping context serializer thread.")
+
 
 def predict_dialog_state(sid):
     """

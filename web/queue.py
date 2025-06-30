@@ -52,6 +52,12 @@ class ProcPCMQueue:
             else:
                 return None
 
+    def get_nowait(self):
+        """Get an item without blocking. Returns None if queue is empty."""
+        if self.data:
+            return self.data.popleft()
+        return None
+        
     def clear(self):
         """
         Clear the queue in a thread-safe manner.
