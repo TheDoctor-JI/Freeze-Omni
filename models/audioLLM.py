@@ -218,6 +218,8 @@ class AudioLLM(torch.nn.Module):
         
         # If 'role' key is present in extra_inputs, use that role as the chat prefix
         if extra_inputs.get('role', None) is not None:
+            ## <|im_start|>system\n[PROMPT CONTENT]
+            
             chat_prefix = self.tokenizer([extra_inputs['role']], 
                 return_tensors="pt")['input_ids'].to('cuda')  # Convert role to tokens and move to CUDA device
         else:
@@ -297,8 +299,9 @@ class AudioLLM(torch.nn.Module):
         if self.chat_template is not None:
             ## Apply chat template. In listening state, the user input grows. In speaking state, the system decoded tokens grows. Different template (special tokens) are used to segregate user input and system decoded tokens which get input to the model autoregressively.
             if extra_inputs['stat'] == 'dialog_sl':
+                ## Note that this prefix to human audio will not contain the |<im_end>| token. This is to be added in the subsequent assistant response
                 chat_prefix = self.chat_template['prefix'].to(
-                                                    inputs_embeds.device)
+                                                    inputs_embeds.device)## <|im_end|>\n<|im_start|>user\n
                 chat_prefix = torch.cat((torch.tensor([[self.tokenizer.eod_id]]
                                     ).to(inputs_embeds.device), chat_prefix), 1)
                 chat_prefix_embeds = self.llm_decoder.transformer.wte(chat_prefix)
@@ -307,7 +310,7 @@ class AudioLLM(torch.nn.Module):
                 inputs_embeds = torch.cat((chat_prefix_embeds, inputs_embeds), 1)
                 attention_mask = torch.cat((chat_prefix_mask, attention_mask), 1)
             if extra_inputs['stat'] == 'dialog_ss':
-                chat_suffix = self.chat_template['suffix'].to('cuda')
+                chat_suffix = self.chat_template['suffix'].to('cuda')## <|im_end|>\n<|im_start|>assistant\n
                 chat_suffix_embeds = self.llm_decoder.transformer.wte(chat_suffix)
                 chat_suffix_mask = torch.full(chat_suffix.shape, True).to('cuda')
                 inputs_embeds = chat_suffix_embeds

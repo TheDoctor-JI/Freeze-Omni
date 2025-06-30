@@ -363,7 +363,6 @@ def timeout_monitor_thread(sid, timeout_seconds):
             break
     print(f"Sid: {sid} Stopping timeout monitor thread.")
 
-
 def llm_prefill(data, outputs, sid, is_first_pack=False):
     """
     Simplified LLM prefill for dialog state prediction only.

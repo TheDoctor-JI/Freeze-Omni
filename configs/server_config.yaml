@@ -5,7 +5,7 @@ connection:
   ip: "localhost" # From start_monitoring.sh, line 21
   port: "8765" # From start_monitoring.sh, line 22
   max_users: 1 # From start_monitoring.sh, line 23
-  session_timeout: 10 # From server_alt.py, line 40 (argparse default)
+  session_timeout: 600 # From server_alt.py, line 40 (argparse default)
   llm_exec_nums: 1 # From start_monitoring.sh, line 24
 
 
