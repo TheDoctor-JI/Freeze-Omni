@@ -192,6 +192,7 @@ class DialogStateParams:
                 'user': ProcPCMQueue(),
                 'system': ProcPCMQueue()
             }
+
             ## Main queue for dialog state predicting, input is sequentialized
             self.processed_pcm_queue = ProcPCMQueue()
 
@@ -291,7 +292,7 @@ def standalone_vad_thread(sid, identity):
 def feature_gating_thread(sid, identity):
     """
     This thread gets annotated audio for a specific identity, computes fbank features,
-    and gates the features to the shared processing thread.
+    and gates the features to the serializer
     """
     user = connected_users[sid]
     print(f"Sid: {sid} Starting feature gating thread for '{identity}'.")
@@ -332,7 +333,7 @@ def feature_gating_thread(sid, identity):
                         'status': 'ipu_sl' if i == 0 else 'ipu_cl',
                         'timestamp': gated_feature_data.get('timestamp', time.time())##For these overbleed features from the last chunk, just set the time stamp to be the same as the current chunk
                     }
-                    user.processed_pcm_queue.put(feature_item)
+                    user.context_serializer.add_feature_chunk(feature_item)
                 
                 feature_item = {
                     'identity': identity,
@@ -340,16 +341,16 @@ def feature_gating_thread(sid, identity):
                     'status': 'ipu_cl' if len(gated_feature_data['feature_last_chunk']) > 0 else 'ipu_sl',
                     'timestamp': gated_feature_data.get('timestamp', time.time())
                 }
-                user.processed_pcm_queue.put(feature_item)
+                user.context_serializer.add_feature_chunk(feature_item)
             else:
-                user.processed_pcm_queue.put(gated_feature_data)
+                user.context_serializer.add_feature_chunk(gated_feature_data)
 
 
     print(f"Sid: {sid} Stopping feature gating thread for '{identity}'.")
 
 def context_serializer_thread(sid):
     """
-    Context serializer thread that takes features from both user and system gated queues,
+    Context serializer thread that takes features from both user and system in the priority queue it maintains, and
     serializes them based on timestamps, and outputs to the processed_pcm_queue.
     """
     user = connected_users[sid]
@@ -357,16 +358,16 @@ def context_serializer_thread(sid):
     
     while not user.stop_all_threads:
         time.sleep(0.01)
-        
-        # Get features from both queues
-        user_feature = user.gated_feature_queue['user'].get_nowait()
-        system_feature = user.gated_feature_queue['system'].get_nowait()
-        
-        # Process serialization if we have any features
-        if user_feature is not None or system_feature is not None:
-            next_aud_feature_to_proc = user.context_serializer.resolve(user_feature, system_feature)
-            if next_aud_feature_to_proc is not None:
-                user.processed_pcm_queue.put(next_aud_feature_to_proc)
+
+        ## Get the next feature to process
+        feature_to_process = user.context_serializer.get_next_feature()
+
+        if feature_to_process is None:
+            continue
+
+        ## Send to the main processing queue for dialog state prediction
+        if feature_to_process is not None:
+            user.processed_pcm_queue.put(feature_to_process)
     
     print(f"Sid: {sid} Stopping context serializer thread.")
 
@@ -572,6 +573,11 @@ def handle_connect():
         connected_users[sid].timeout_thread = timeout_thread
 
 
+        # Start context serializer thread
+        context_serializer_thread_obj = threading.Thread(target=context_serializer_thread, args=(sid,))
+        context_serializer_thread_obj.start()
+        connected_users[sid].context_serializer_thread = context_serializer_thread_obj
+
         # Start threads for both 'user' and 'system' identities
         for identity in ['user', 'system']:
             # Start standalone VAD thread if enabled
@@ -632,6 +638,9 @@ def handle_disconnect():
 
             if hasattr(connected_users[sid], 'timeout_thread'):
                 connected_users[sid].timeout_thread.join(timeout=2.0)
+
+            if hasattr(connected_users[sid], 'context_serializer_thread'):
+                connected_users[sid].context_serializer_thread.join(timeout=2.0)
             
             # Release resources
             connected_users[sid].release()
