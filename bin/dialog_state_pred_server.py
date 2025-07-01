@@ -371,7 +371,6 @@ def context_serializer_thread(sid):
     
     print(f"Sid: {sid} Stopping context serializer thread.")
 
-
 def predict_dialog_state(sid):
     """
     Main loop for processing gated audio and predicting dialog states.
