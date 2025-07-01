@@ -32,9 +32,9 @@ class ContextSerializer:
         Add a feature chunk to the priority queue.
         
         Parameters:
-        - feature_chunk: a dictionary containing: {'identity', 'feature', 'status', 'timestamp'}
+        - feature_chunk: a dictionary containing: {'identity', 'feature', 'status', 'time_stamp'}
         """
-        timestamp = feature_chunk.get('timestamp', None)
+        timestamp = feature_chunk.get('time_stamp', None)
         identity = feature_chunk.get('identity', None)
         status = feature_chunk.get('status', None)
         feature = feature_chunk.get('feature', None)
@@ -110,7 +110,7 @@ class ContextSerializer:
 
         if to_send:
             feature_to_send = {
-                'timestamp': timestamp,
+                'time_stamp': timestamp,
                 'identity': identity,
                 'status': status if not force_ipu_sl else 'ipu_sl',  # Force status to ipu_sl if necessary
                 'feature': feature_data,

@@ -143,8 +143,7 @@ class DialogStateParams:
             
         except Exception as e:
             print(f"Error initializing DialogStateParams: {e}")
-            if hasattr(self, 'pipeline_obj') and self.pipeline_obj:
-                self.pipeline_obj.release()
+            self.release()
             raise
     
     def reset_context(self):
@@ -216,6 +215,7 @@ class DialogStateParams:
 
             # Start VAD threads for user and system
             if self.dialog_state_pred_configs['vad']['use_standalone_vad']:
+                self.vad_threads = {}
                 for identity in ['user', 'system']:
                     self.vad_threads[identity] = threading.Thread(
                         target=self.vad_annotation,
@@ -225,6 +225,7 @@ class DialogStateParams:
                     self.vad_threads[identity].start()
                 
             # Start feature gating threads for user and system
+            self.feature_gating_threads = {}
             for identity in ['user', 'system']:
                 self.feature_gating_threads[identity] = threading.Thread(
                     target=self.feature_gating,
@@ -287,15 +288,23 @@ class DialogStateParams:
         except Exception as e:
             print(f"Error releasing resources: {e}")
 
-    def enqueue_audio_data(self, audio_data, identity):
+    def enqueue_audio_data(self, identity, audio_data_dict):
         """
         Enqueue audio data for processing.
-        
-        Parameters:
-        - audio_data (dict): Audio data containing 'audio', 'sr', 'enc', and 'timestamp'.
-        - identity (str): Identity of the speaker, either 'user' or 'system'.
+        audio_data_dict should be a dictionary with the following keys:
+                {
+                    'audio': audio_chunk,  # Raw audio data in bytes
+                    'sr': sampling_rate,   # Sampling rate, e.g., 16000
+                    'enc': encoding,       # Encoding, e.g., 's16le'
+                    'time_stamp': timstamp # Timestamp for the audio chunk
+                },
         """
-        self.audio_data_input_queue.put((audio_data, identity))
+        self.audio_data_input_queue.put(
+            (
+                audio_data_dict,
+                identity
+            )
+        )
 
     def receive_raw_audio_chunk(self):
 
@@ -305,177 +314,266 @@ class DialogStateParams:
             'audio': <bytes>,  # Raw audio data in bytes
             'sr': <int>,      # Sampling rate, e.g., 16000
             'enc': <str>      # Encoding, e.g., 's16le'
-            'timestamp': <float> # timestamp for the audio chunk
+            'time_stamp': <float> # timestamp for the audio chunk
         }
         as well as an identity string which can be either 'user' or 'system'.
         from a queue which receives audio data from the top level server
         '''
-
-        while not self.stop_all_threads:
-
-            # print(f"Sid: {self.sid} Received raw audio chunk for '{identity}' with size: {len(audio_dat_dict['audio'])}")
-
-            ## Get the audio data from the input queue
-            time.sleep(0.005)
-
-            data_item = self.audio_data_input_queue.get()
-
-            if data_item is None:
-                continue
-
-            audio_dat_dict, identity = data_item
-
-            ## Check the data format
-            if(audio_dat_dict['sr'] != DialogStateParams.EXPECTED_SAMPLING_RATE):
-                raise ValueError(f"Expected audio sampling rate {DialogStateParams.EXPECTED_SAMPLING_RATE}, but got {audio_dat_dict['sr']}")
-            if(audio_dat_dict['enc'] != 's16le'):
-                raise ValueError(f"Expected audio encoding '{DialogStateParams.EXPECTED_ENCODING}', but got {audio_dat_dict['enc']}")
+        try:
             
-            audio_chunk = np.frombuffer(bytes(audio_dat_dict['audio']), dtype=np.int16)
-            audio_dat_dict['audio'] = audio_chunk.astype(np.float32) / 32767.0
+            while not self.stop_all_threads:
 
-            ## Enqueue the audio chunk to the respective queue for subsequent processing
-            self.raw_pcm_queue[identity].put(audio_dat_dict)
+                # print(f"Sid: {self.sid} Received raw audio chunk for '{identity}' with size: {len(audio_dat_dict['audio'])}")
+
+                ## Get the audio data from the input queue
+                time.sleep(0.005)
+
+                data_item = self.audio_data_input_queue.get()
+
+                if data_item is None:
+                    continue
+
+                audio_dat_dict, identity = data_item
+
+                ## Check the data format
+                if(audio_dat_dict['sr'] != DialogStateParams.EXPECTED_SAMPLING_RATE):
+                    raise ValueError(f"Expected audio sampling rate {DialogStateParams.EXPECTED_SAMPLING_RATE}, but got {audio_dat_dict['sr']}")
+                if(audio_dat_dict['enc'] != 's16le'):
+                    raise ValueError(f"Expected audio encoding '{DialogStateParams.EXPECTED_ENCODING}', but got {audio_dat_dict['enc']}")
+                
+                audio_chunk = np.frombuffer(bytes(audio_dat_dict['audio']), dtype=np.int16)
+                audio_chunk = audio_chunk.astype(np.float32) / 32767.0
+
+                ## Create a new dict as a deep copy
+                new_audio_dat_dict = {
+                    'audio': audio_chunk,  # Raw audio data as a numpy array
+                    'sr': audio_dat_dict['sr'],  # Sampling rate, e.g., 16000
+                    'enc': audio_dat_dict['enc'],  # Encoding, e.g., 's16le'
+                    'time_stamp': audio_dat_dict['time_stamp']  # Timestamp for the audio chunk
+                }
+
+                ## Enqueue the audio chunk to the respective queue for subsequent processing
+                self.raw_pcm_queue[identity].put(new_audio_dat_dict)
+        
+        except Exception as e:
+            print(f"Error initializing DialogStateParams: {e}")
+            self.release()
+            raise
 
     def vad_annotation(self, identity):
         """
         Standalone VAD thread that consumes raw audio for a specific identity,
         annotates it, and puts it into the corresponding annotated_audio_queue.
         """
-        chunk_size = self.standalone_vad[identity].get_chunk_size()
-        print(f"Sid: {self.sid} Starting standalone VAD thread for '{identity}' with chunk size: {chunk_size}")
-        
-        while not self.stop_all_threads:
 
-            time.sleep(0.005)
-
-            audio_chunk = self.raw_pcm_queue[identity].get(chunk_size)
-            if audio_chunk is None:
-                continue
-
-            # print(f"Sid: {self.sid} Received raw audio chunk of size: {len(audio_chunk)}")
-                
-            # Run VAD prediction to get annotated audio
-            annotated_audio = self.standalone_vad[identity].predict(audio_chunk)
+        try:
             
-            # Emit VAD events for monitoring GUI (only for user)
-            status = annotated_audio['status']
-            if status == 'ipu_sl':
-                self.emit_vad_event(status, identity=identity)
-                self.emit_state_update(vad_state=True, identity=identity)
-            elif status == 'ipu_el':
-                self.emit_vad_event(status, identity=identity)
-                self.emit_state_update(vad_state=False,  identity=identity)
-            elif status == 'ipu_cl':
-                self.emit_state_update(vad_state=True,  identity=identity)
+            chunk_size = self.standalone_vad[identity].get_chunk_size()
+            print(f"Sid: {self.sid} Starting standalone VAD thread for '{identity}' with chunk size: {chunk_size}")
+            
+            
+            aggregated_audio_data_dict = {
+                'audio': np.array([], dtype=np.float32),  # Initialize with empty array
+                'sr': DialogStateParams.EXPECTED_SAMPLING_RATE,
+                'enc': DialogStateParams.EXPECTED_ENCODING,
+                'time_stamp': None  # Use current time as timestamp
+            }
 
-            # Put annotated audio into the queue for the feature gating thread
-            self.annotated_audio_queue[identity].put(annotated_audio)
+            while not self.stop_all_threads:
 
-        print(f"Sid: {self.sid} Stopping standalone VAD thread for '{identity}'")
+                time.sleep(0.005)
+
+                new_audio_data_dict = self.raw_pcm_queue[identity].get(chunk_size)
+                if new_audio_data_dict is None:
+                    continue
+
+                # print(f"Sid: {self.sid} Received raw audio chunk of size: {len(audio_data_dict['audio'])} for '{identity}'")
+
+                if(len(aggregated_audio_data_dict['audio']) < chunk_size):
+                    
+                    ## Get more samples
+                    samples_to_add = chunk_size - len(aggregated_audio_data_dict['audio'])
+                    samples_obtained = len(new_audio_data_dict['audio'])
+
+                    if samples_obtained < samples_to_add:
+                        ## Not enough samples, just add the available samples, update the timestamp, and then we will wait for more samples
+                        aggregated_audio_data_dict['audio'] = np.concatenate((aggregated_audio_data_dict['audio'], new_audio_data_dict['audio']))
+                        aggregated_audio_data_dict['time_stamp'] = new_audio_data_dict['time_stamp']
+                        continue
+                    else:
+                        ## Enough samples, add the samples and update the timestamp
+                        aggregated_audio_data_dict['audio'] = np.concatenate((aggregated_audio_data_dict['audio'], new_audio_data_dict['audio'][:samples_to_add]))
+                        aggregated_audio_data_dict['time_stamp'] = new_audio_data_dict['time_stamp']
+
+                        ## We will process this aggregated audio data now
+                        sufficient_audio_data_dict = aggregated_audio_data_dict
+
+                        ## Whatever is left in the new audio data becomes the new aggregated audio data
+                        aggregated_audio_data_dict = {
+                            'audio': new_audio_data_dict['audio'][samples_to_add:],  # Remaining audio data
+                            'sr': new_audio_data_dict['sr'],  # Sampling rate, e.g.,
+                            'enc': new_audio_data_dict['enc'],  # Encoding, e.g., 's16le'
+                            'time_stamp': new_audio_data_dict['time_stamp']  # Timestamp for the audio chunk
+                        }
+                else:
+                    ## We have enough samples, just use the aggregated audio data
+                    sufficient_audio_data_dict = aggregated_audio_data_dict
+                    
+                    ## Reset the aggregated audio data
+                    aggregated_audio_data_dict = {
+                        'audio': np.array([], dtype=np.float32),  # Reset to empty array
+                        'sr': DialogStateParams.EXPECTED_SAMPLING_RATE,
+                        'enc': DialogStateParams.EXPECTED_ENCODING,
+                        'time_stamp': None  # Use current time as timestamp
+                    }
+
+                    
+                # Run VAD prediction to get annotated audio
+                annotated_audio = self.standalone_vad[identity].predict(sufficient_audio_data_dict)
+                
+                # Emit VAD events for monitoring GUI (only for user)
+                status = annotated_audio['status']
+                if status == 'ipu_sl':
+                    self.emit_vad_event(status, identity=identity)
+                    self.emit_state_update(vad_state=True, identity=identity)
+                elif status == 'ipu_el':
+                    self.emit_vad_event(status, identity=identity)
+                    self.emit_state_update(vad_state=False,  identity=identity)
+                elif status == 'ipu_cl':
+                    self.emit_state_update(vad_state=True,  identity=identity)
+
+                # Put annotated audio into the queue for the feature gating thread
+                self.annotated_audio_queue[identity].put(annotated_audio)
+
+            print(f"Sid: {self.sid} Stopping standalone VAD thread for '{identity}'")
+        
+        except Exception as e:
+            print(f"Error initializing DialogStateParams: {e}")
+            self.release()
+            raise
 
     def feature_gating(self, identity):
         """
         This thread gets annotated audio for a specific identity, computes fbank features,
         and gates the features to the serializer
         """
-        print(f"Sid: {self.sid} Starting feature gating thread for '{identity}'.")
+        try:
+            print(f"Sid: {self.sid} Starting feature gating thread for '{identity}'.")
 
-        while not self.stop_all_threads:
+            while not self.stop_all_threads:
 
-            time.sleep(0.005)
-            
-            # Get annotated audio chunk for the specific identity
-            annotated_audio = self.annotated_audio_queue[identity].get()
-            
-
-            if(annotated_audio is None):
-                continue
-
-            # print(f"Sid: {self.sid} Received annotated audio chunk with status: {annotated_audio['status']}, size: {len(annotated_audio['audio'])}")
-
-
-            # Process chunk to extract and gate features
-            gated_feature_data = self.feature_gater[identity].process_and_gate(annotated_audio)
-            
-            # If the feature gater returns data, put it in the processed queue for the LLM to process.
-            if gated_feature_data:
-                # Set the identity for this chunk
-                gated_feature_data['identity'] = identity
+                time.sleep(0.005)
                 
-                if 'timestamp' in annotated_audio:
-                    gated_feature_data['timestamp'] = annotated_audio['timestamp']
+                # Get annotated audio chunk for the specific identity
+                annotated_audio = self.annotated_audio_queue[identity].get()
                 
-                if gated_feature_data['status'] == 'ipu_sl':
-                    for i, feature in enumerate(gated_feature_data['feature_last_chunk']):
+
+                if(annotated_audio is None):
+                    continue
+
+                # print(f"Sid: {self.sid} Received annotated audio chunk with status: {annotated_audio['status']}, size: {len(annotated_audio['audio'])}")
+
+
+                # Process chunk to extract and gate features
+                gated_feature_data = self.feature_gater[identity].process_and_gate(annotated_audio)
+                
+                # If the feature gater returns data, put it in the processed queue for the LLM to process.
+                if gated_feature_data:
+                    # Set the identity for this chunk
+                    gated_feature_data['identity'] = identity
+                    
+                    if 'time_stamp' in annotated_audio:
+                        gated_feature_data['time_stamp'] = annotated_audio['time_stamp']
+                    
+                    if gated_feature_data['status'] == 'ipu_sl':
+                        for i, feature in enumerate(gated_feature_data['feature_last_chunk']):
+                            feature_item = {
+                                'identity': identity,
+                                'feature': feature,
+                                'status': 'ipu_sl' if i == 0 else 'ipu_cl',
+                                'time_stamp': gated_feature_data.get('time_stamp', time.time())##For these overbleed features from the last chunk, just set the time stamp to be the same as the current chunk
+                            }
+                            self.context_serializer.add_feature_chunk(feature_item)
+                        
                         feature_item = {
                             'identity': identity,
-                            'feature': feature,
-                            'status': 'ipu_sl' if i == 0 else 'ipu_cl',
-                            'timestamp': gated_feature_data.get('timestamp', time.time())##For these overbleed features from the last chunk, just set the time stamp to be the same as the current chunk
+                            'feature': gated_feature_data['feature'],
+                            'status': 'ipu_cl' if len(gated_feature_data['feature_last_chunk']) > 0 else 'ipu_sl',
+                            'time_stamp': gated_feature_data.get('time_stamp', time.time())
                         }
                         self.context_serializer.add_feature_chunk(feature_item)
-                    
-                    feature_item = {
-                        'identity': identity,
-                        'feature': gated_feature_data['feature'],
-                        'status': 'ipu_cl' if len(gated_feature_data['feature_last_chunk']) > 0 else 'ipu_sl',
-                        'timestamp': gated_feature_data.get('timestamp', time.time())
-                    }
-                    self.context_serializer.add_feature_chunk(feature_item)
-                else:
-                    self.context_serializer.add_feature_chunk(gated_feature_data)
+                    else:
+                        self.context_serializer.add_feature_chunk(gated_feature_data)
 
+            print(f"Sid: {self.sid} Stopping feature gating thread for '{identity}'.")
 
-        print(f"Sid: {self.sid} Stopping feature gating thread for '{identity}'.")
+        except Exception as e:
+            print(f"Error initializing DialogStateParams: {e}")
+            self.release()
+            raise
 
     def serialize_context(self):
         """
         Context serializer thread that takes features from both user and system in the priority queue it maintains, and
         serializes them based on timestamps, and outputs to the processed_pcm_queue.
         """
-        print(f"Sid: {self.sid} Starting context serializer thread.")
-        
-        while not self.stop_all_threads:
-            time.sleep(0.005)
 
-            ## Get the next feature to process
-            feature_to_process = self.context_serializer.get_next_feature()
+        try:
 
-            if feature_to_process is None:
-                continue
+            print(f"Sid: {self.sid} Starting context serializer thread.")
+            
+            while not self.stop_all_threads:
+                time.sleep(0.005)
 
-            ## Send to the main processing queue for dialog state prediction
-            if feature_to_process is not None:
-                self.processed_pcm_queue.put(feature_to_process)
-        
-        print(f"Sid: {self.sid} Stopping context serializer thread.")
+                ## Get the next feature to process
+                feature_to_process = self.context_serializer.get_next_feature()
+
+                if feature_to_process is None:
+                    continue
+
+                ## Send to the main processing queue for dialog state prediction
+                if feature_to_process is not None:
+                    self.processed_pcm_queue.put(feature_to_process)
+            
+            print(f"Sid: {self.sid} Stopping context serializer thread.")
+
+        except Exception as e:
+            print(f"Error initializing DialogStateParams: {e}")
+            self.release()
+            raise
 
     def predict_dialog_state(self):
         """
         Main loop for processing gated audio and predicting dialog states.
         Uses VAD-provided labels to determine IPU boundaries.
         """
-        print(f"Sid: {self.sid} Starting dialog state prediction thread")
-            
-        while True:
+        try:
 
-            time.sleep(0.005)
-            
-            if self.stop_all_threads:
-                print(f"Sid: {self.sid} Stopping dialog state prediction thread")
-                break
-                    
-            # Get processed audio from the gated queue
-            feature_data = self.processed_pcm_queue.get()  # Get one item, i.e., one chunk
-            if feature_data is None:
-                continue
+            print(f"Sid: {self.sid} Starting dialog state prediction thread")
                 
-            print(f"Sid: {self.sid} Processing approved audio for dialog state prediction, status: {feature_data['status']}, identity: {feature_data.get('identity', 'N/A')}")
-            
-            # Always run forward processing
-            self.llm_prefill(feature_data)
+            while True:
 
+                time.sleep(0.005)
+                
+                if self.stop_all_threads:
+                    print(f"Sid: {self.sid} Stopping dialog state prediction thread")
+                    break
+                        
+                # Get processed audio from the gated queue
+                feature_data = self.processed_pcm_queue.get()  # Get one item, i.e., one chunk
+                if feature_data is None:
+                    continue
+                    
+                print(f"Sid: {self.sid} Processing approved audio for dialog state prediction, status: {feature_data['status']}, identity: {feature_data.get('identity', 'N/A')}")
+                
+                # Always run forward processing
+                self.llm_prefill(feature_data)
+
+        except Exception as e:
+            print(f"Error initializing DialogStateParams: {e}")
+            self.release()
+            raise
+        
     def llm_prefill(self, data):
         """
         Processes an audio chunk to update the shared conversational context.
