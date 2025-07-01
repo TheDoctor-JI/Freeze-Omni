@@ -1,13 +1,6 @@
 model_path: "/home/eeyifanshen/e2e_audio_LLM/dialog_turntaking_new/Freeze-Omni/checkpoints"
 llm_path: "/home/eeyifanshen/e2e_audio_LLM/dialog_turntaking_new/Freeze-Omni/Qwen2-7B-Instruct"
 
-connection:
-  ip: "localhost" # From start_monitoring.sh, line 21
-  port: "8765" # From start_monitoring.sh, line 22
-  max_users: 1 # From start_monitoring.sh, line 23
-  session_timeout: 600 # From server_alt.py, line 40 (argparse default)
-  llm_exec_nums: 1 # From start_monitoring.sh, line 24
-
 
 audio:
   expected_sampling_rate: 16000 # From dialog_state_monitoring.html, line 306
@@ -44,4 +37,4 @@ inference_control:
 
 
 dialog_state_decision:
-  threshold: 0.5 
+  resp_threshold: 0.5 

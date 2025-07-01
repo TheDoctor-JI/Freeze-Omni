@@ -1,0 +1,506 @@
+from __future__ import print_function
+
+import argparse
+import os
+import json
+import queue
+import torch
+import yaml
+import threading
+import struct
+import time
+import torchaudio
+import datetime
+import builtins
+import numpy as np
+
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from copy import deepcopy
+from threading import Timer
+from flask import Flask, render_template, request
+from flask_socketio import SocketIO, disconnect, emit
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from bin.pool import pipelineObjectPool
+from web.queue import PCMQueue, ProcPCMQueue, ThreadSafeQueue
+from models.AudioFeatureGating import AudioFeatureGating
+from models.ContextSerializer import ContextSerializer
+from flask import Blueprint, request
+from flask_socketio import disconnect
+
+
+def get_args():
+
+    inference_config_path = '/home/eeyifanshen/e2e_audio_LLM/dialog_turntaking_new/Freeze-Omni/configs/dialog_state_pred_config.yaml'
+
+    # Load config from YAML file
+    with open(inference_config_path, 'r') as f:
+        config = yaml.safe_load(f)
+
+    print("Configuration loaded:", json.dumps(config, indent=2))
+    return config
+
+
+def custom_print(*args, **kwargs):
+    current_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+    original_print(f'[{current_time}]', *args, **kwargs)
+
+
+# change print function to add time stamp
+original_print = builtins.print
+builtins.print = custom_print
+
+
+'''
+Main logic for dialog state prediction
+'''
+class DialogStateParams:
+    """
+    This class holds all the parameters and context for dialog state prediction.
+    """
+
+    ## Class variables:
+    DIALOG_STATE_PRED_CONFIGS = get_args()
+    MAX_PIPELINE_NUN = 1
+    PIPELINE_POOL = pipelineObjectPool(size=MAX_PIPELINE_NUN, configs=DIALOG_STATE_PRED_CONFIGS)
+    EXPECTED_SAMPLING_RATE = DIALOG_STATE_PRED_CONFIGS['audio']['expected_sampling_rate']
+    EXPECTED_ENCODING = 's16le'
+    RESPONSE_THRESHOLD = DIALOG_STATE_PRED_CONFIGS['dialog_state_decision']['resp_threshold']
+
+    def __init__(self, sid, socketio):
+        try:
+            self.sid = sid
+
+            ## Config for dialog state prediction
+            self.dialog_state_pred_configs = DialogStateParams.DIALOG_STATE_PRED_CONFIGS
+
+            ## Shared context
+            self.socketio = socketio
+            self.pipeline_pool = DialogStateParams.PIPELINE_POOL
+            self.pipeline_obj = self.pipeline_pool.acquire()
+            if self.pipeline_obj is None:
+                raise Exception("Failed to get pipeline object from pool")
+                
+
+            ## Internal parameters for this class
+
+            # init default prompt
+            _, init_key_values, _, _, _ = self.pipeline_obj.pipeline_proc.speech_dialogue(None, identity = '', status='pre', 
+                                                                        role=self.dialog_state_pred_configs['inference_control']['default_prompt'])
+            self.system_role = deepcopy(init_key_values)
+
+            
+            # Dialog state prediction context
+            self.caches = {} # Holds caches for 'user' and 'system'
+            self.past_key_values = None
+            self.dialog_state_callback = None
+            
+            self.feature_gater = {
+                'user': AudioFeatureGating(
+                    sample_rate=self.dialog_state_pred_configs['audio']['expected_sampling_rate'],
+                    cache_history_size=self.dialog_state_pred_configs['audio_feature_gating']['feature_gating_history_size'],
+                    onset_input_chunk_cache_size=self.dialog_state_pred_configs['audio_feature_gating']['onset_input_chunk_cache_size'],
+                    fbank_config=self.dialog_state_pred_configs['audio_feature_gating']['fbank']
+                ),
+                'system': AudioFeatureGating(
+                    sample_rate=self.dialog_state_pred_configs['audio']['expected_sampling_rate'],
+                    cache_history_size=self.dialog_state_pred_configs['audio_feature_gating']['feature_gating_history_size'],
+                    onset_input_chunk_cache_size=self.dialog_state_pred_configs['audio_feature_gating']['onset_input_chunk_cache_size'],
+                    fbank_config=self.dialog_state_pred_configs['audio_feature_gating']['fbank']
+                )
+            }
+
+            if self.dialog_state_pred_configs['vad']['use_standalone_vad']:
+                from periphrals.PureVAD import PureVAD
+                self.standalone_vad = {
+                    'user': PureVAD(
+                        min_silent_duration_second=self.dialog_state_pred_configs['vad']['min_silent_duration_second'],
+                        speech_pad_second=self.dialog_state_pred_configs['vad']['speech_pad_second'],
+                        vad_threshold=self.dialog_state_pred_configs['vad']['vad_threshold'],
+                        cache_history_size=self.dialog_state_pred_configs['vad']['vad_history_cache_chunk_cnt'],
+                        audio_chunk_size=self.feature_gater['user'].expected_frames_per_audio_chunk,
+                    ),
+                    'system': PureVAD(
+                        min_silent_duration_second=self.dialog_state_pred_configs['vad']['min_silent_duration_second'],
+                        speech_pad_second=self.dialog_state_pred_configs['vad']['speech_pad_second'],
+                        vad_threshold=self.dialog_state_pred_configs['vad']['vad_threshold'],
+                        cache_history_size=self.dialog_state_pred_configs['vad']['vad_history_cache_chunk_cnt'],
+                        audio_chunk_size=self.feature_gater['system'].expected_frames_per_audio_chunk,
+                    )
+                }
+
+
+            # Initialize context serializer
+            self.context_serializer = ContextSerializer()
+
+
+            # Control flags
+            self.stop_all_threads = False
+            
+
+            # Thread references
+            self.vad_threads = {}
+            self.feature_gating_threads = {}
+            self.context_serializer_thread = None
+            self.dialog_state_prediction_thread = None
+            
+        except Exception as e:
+            print(f"Error initializing DialogStateParams: {e}")
+            if hasattr(self, 'pipeline_obj') and self.pipeline_obj:
+                self.pipeline_obj.release()
+            raise
+    
+    def reset_context(self):
+        """Reset the conversation context"""
+        try:
+
+            # Audio queues for user and system separately
+            self.raw_pcm_queue = {
+                'user': PCMQueue(),
+                'system': PCMQueue()
+            }
+            self.annotated_audio_queue = {
+                'user': ProcPCMQueue(),
+                'system': ProcPCMQueue()
+            }
+
+            ## Main queue for dialog state predicting, input is sequentialized
+            self.processed_pcm_queue = ProcPCMQueue()
+
+
+            # Reset feature gater state for both
+            if hasattr(self, 'feature_gater'):
+                self.feature_gater['user'].reset()
+                self.feature_gater['system'].reset()
+
+            # Reset VAD state for both
+            if hasattr(self, 'standalone_vad'):
+                self.standalone_vad['user'].reset()
+                self.standalone_vad['system'].reset()
+
+
+            # Reset context serializer
+            if hasattr(self, 'context_serializer'):
+                self.context_serializer.reset()
+                
+
+            #Initially or upon reset, only contains a system prompt
+            self.past_key_values = deepcopy(self.system_role)
+
+            # Reset caches for both user and system
+            self.caches = {
+                'user': {
+                    'encoder_cache': None,
+                    'adapter_cache': None,
+                    'pe_index': 0,
+                },
+                'system': {
+                    'encoder_cache': None,
+                    'adapter_cache': None,
+                    'pe_index': 0,
+                }
+            }
+
+        except Exception as e:
+            print(f"Error resetting context: {e}")
+            raise
+    
+    def start_all_threads(self):
+        """Start all necessary threads for dialog state prediction"""
+        try:
+            # Start VAD threads for user and system
+            if self.dialog_state_pred_configs['vad']['use_standalone_vad']:
+                for identity in ['user', 'system']:
+                    self.vad_threads[identity] = threading.Thread(
+                        target=self.vad_annotation,
+                        args=(identity,),
+                        name=f"VAD_Thread_{identity}"
+                    )
+                    self.vad_threads[identity].start()
+                
+            # Start feature gating threads for user and system
+            for identity in ['user', 'system']:
+                self.feature_gating_threads[identity] = threading.Thread(
+                    target=self.feature_gating,
+                    args=(identity,),
+                    name=f"FeatureGating_Thread_{identity}"
+                )
+                self.feature_gating_threads[identity].start()
+
+            # Start context serializer thread
+            self.context_serializer_thread = threading.Thread(
+                target=self.serialize_context,
+                name="ContextSerializer_Thread"
+            )
+            self.context_serializer_thread.start()
+
+            # Start dialog state prediction thread
+            self.dialog_state_prediction_thread = threading.Thread(
+                target=self.predict_dialog_state,
+                name="DialogStatePrediction_Thread"
+            )
+            self.dialog_state_prediction_thread.start()
+
+        except Exception as e:
+            print(f"Error starting threads: {e}")
+            raise
+
+    def set_dialog_callback(self, callback):
+        """Set callback function to be called when dialog_ss is predicted"""
+        self.dialog_state_callback = callback
+    
+    def set_prompt(self, prompt):
+        """Set system prompt and reset context"""
+        self.system_role = self.pipeline_obj.pipeline_proc.speech_dialogue(None, stat='pre', role=prompt)
+
+    def release(self):
+        """Release resources"""
+        try:
+            self.stop_all_threads = True
+            if self.pipeline_obj:
+                self.pipeline_pool.release(self.pipeline_obj)
+        except Exception as e:
+            print(f"Error releasing resources: {e}")
+
+    def receive_raw_audio_chunk(self, audio_dat_dict: dict, identity: str):
+
+        # print(f"Sid: {self.sid} Received raw audio chunk for '{identity}' with size: {len(audio_dat_dict['audio'])}")
+
+        if(audio_dat_dict['sr'] != DialogStateParams.EXPECTED_SAMPLING_RATE):
+            raise ValueError(f"Expected audio sampling rate {DialogStateParams.EXPECTED_SAMPLING_RATE}, but got {audio_dat_dict['sr']}")
+        if(audio_dat_dict['enc'] != 's16le'):
+            raise ValueError(f"Expected audio encoding '{DialogStateParams.EXPECTED_ENCODING}', but got {audio_dat_dict['enc']}")
+        
+        audio_chunk = np.frombuffer(bytes(audio_dat_dict['audio']), dtype=np.int16)
+        self.raw_pcm_queue[identity].put(audio_chunk.astype(np.float32) / 32768.0)
+
+    def vad_annotation(self, identity):
+        """
+        Standalone VAD thread that consumes raw audio for a specific identity,
+        annotates it, and puts it into the corresponding annotated_audio_queue.
+        """
+        chunk_size = self.standalone_vad[identity].get_chunk_size()
+        print(f"Sid: {self.sid} Starting standalone VAD thread for '{identity}' with chunk size: {chunk_size}")
+        
+        while not self.stop_all_threads:
+
+            time.sleep(0.01)
+
+            audio_chunk = self.raw_pcm_queue[identity].get(chunk_size)
+            if audio_chunk is None:
+                continue
+
+            # print(f"Sid: {self.sid} Received raw audio chunk of size: {len(audio_chunk)}")
+                
+            # Run VAD prediction to get annotated audio
+            annotated_audio = self.standalone_vad[identity].predict(audio_chunk)
+            
+            # Emit VAD events for monitoring GUI (only for user)
+            status = annotated_audio['status']
+            if status == 'ipu_sl':
+                self.emit_vad_event(status, identity=identity)
+                self.emit_state_update(vad_state=True, identity=identity)
+            elif status == 'ipu_el':
+                self.emit_vad_event(status, identity=identity)
+                self.emit_state_update(vad_state=False,  identity=identity)
+            elif status == 'ipu_cl':
+                self.emit_state_update(vad_state=True,  identity=identity)
+
+            # Put annotated audio into the queue for the feature gating thread
+            self.annotated_audio_queue[identity].put(annotated_audio)
+
+        print(f"Sid: {self.sid} Stopping standalone VAD thread for '{identity}'")
+
+    def feature_gating(self, identity):
+        """
+        This thread gets annotated audio for a specific identity, computes fbank features,
+        and gates the features to the serializer
+        """
+        print(f"Sid: {self.sid} Starting feature gating thread for '{identity}'.")
+
+        while not self.stop_all_threads:
+
+            time.sleep(0.01)
+            
+            # Get annotated audio chunk for the specific identity
+            annotated_audio = self.annotated_audio_queue[identity].get()
+            
+
+            if(annotated_audio is None):
+                continue
+
+            # print(f"Sid: {self.sid} Received annotated audio chunk with status: {annotated_audio['status']}, size: {len(annotated_audio['audio'])}")
+
+
+            # Process chunk to extract and gate features
+            gated_feature_data = self.feature_gater[identity].process_and_gate(annotated_audio)
+            
+            # If the feature gater returns data, put it in the processed queue for the LLM to process.
+            if gated_feature_data:
+                # Set the identity for this chunk
+                gated_feature_data['identity'] = identity
+                
+                if 'timestamp' in annotated_audio:
+                    gated_feature_data['timestamp'] = annotated_audio['timestamp']
+                
+                if gated_feature_data['status'] == 'ipu_sl':
+                    for i, feature in enumerate(gated_feature_data['feature_last_chunk']):
+                        feature_item = {
+                            'identity': identity,
+                            'feature': feature,
+                            'status': 'ipu_sl' if i == 0 else 'ipu_cl',
+                            'timestamp': gated_feature_data.get('timestamp', time.time())##For these overbleed features from the last chunk, just set the time stamp to be the same as the current chunk
+                        }
+                        self.context_serializer.add_feature_chunk(feature_item)
+                    
+                    feature_item = {
+                        'identity': identity,
+                        'feature': gated_feature_data['feature'],
+                        'status': 'ipu_cl' if len(gated_feature_data['feature_last_chunk']) > 0 else 'ipu_sl',
+                        'timestamp': gated_feature_data.get('timestamp', time.time())
+                    }
+                    self.context_serializer.add_feature_chunk(feature_item)
+                else:
+                    self.context_serializer.add_feature_chunk(gated_feature_data)
+
+
+        print(f"Sid: {self.sid} Stopping feature gating thread for '{identity}'.")
+
+    def serialize_context(self):
+        """
+        Context serializer thread that takes features from both user and system in the priority queue it maintains, and
+        serializes them based on timestamps, and outputs to the processed_pcm_queue.
+        """
+        print(f"Sid: {self.sid} Starting context serializer thread.")
+        
+        while not self.stop_all_threads:
+            time.sleep(0.01)
+
+            ## Get the next feature to process
+            feature_to_process = self.context_serializer.get_next_feature()
+
+            if feature_to_process is None:
+                continue
+
+            ## Send to the main processing queue for dialog state prediction
+            if feature_to_process is not None:
+                self.processed_pcm_queue.put(feature_to_process)
+        
+        print(f"Sid: {self.sid} Stopping context serializer thread.")
+
+    def predict_dialog_state(self):
+        """
+        Main loop for processing gated audio and predicting dialog states.
+        Uses VAD-provided labels to determine IPU boundaries.
+        """
+        print(f"Sid: {self.sid} Starting dialog state prediction thread")
+            
+        while True:
+
+            time.sleep(0.01)
+            
+            if self.stop_all_threads:
+                print(f"Sid: {self.sid} Stopping dialog state prediction thread")
+                break
+                    
+            # Get processed audio from the gated queue
+            feature_data = self.processed_pcm_queue.get()  # Get one item, i.e., one chunk
+            if feature_data is None:
+                continue
+                
+            print(f"Sid: {self.sid} Processing approved audio for dialog state prediction, status: {feature_data['status']}, identity: {feature_data.get('identity', 'N/A')}")
+            
+            # Always run forward processing
+            self.llm_prefill(feature_data)
+
+    def llm_prefill(self, data):
+        """
+        Processes an audio chunk to update the shared conversational context.
+        If the chunk is from the user, it also predicts dialog state probabilities.
+        
+        Parameters:
+        - data (dict): Audio chunk data with features, status, and identity.
+        """
+        
+        identity = data['identity']
+        
+        
+        # print(f"Sid: {self.sid} Processing audio chunk with status: {data['status']} from {identity}")
+        
+
+        # 1. Assemble the context for this processing step
+        outputs = {
+            'past_key_values': self.past_key_values, # Shared conversational history
+            'identity': identity,
+            'status': data['status'],
+            **self.caches[identity] # Identity-specific caches (encoder, adapter, pe_index)
+        }
+
+
+
+        # 2. Call the pipeline
+        prediction_probs, past_key_values, cnn_cache, buffer, pe_index = self.pipeline_obj.pipeline_proc.speech_dialogue(
+            torch.tensor(data['feature']), **outputs
+        )
+
+
+        # 3. Update the shared and identity-specific contexts
+        self.past_key_values = past_key_values # Update shared history
+        self.caches[identity] = { # Update identity-specific caches
+            'encoder_cache': buffer,
+            'adapter_cache': cnn_cache,
+            'pe_index': pe_index
+        }
+        
+
+        # 4. Handle prediction results if the input was from the user
+        if identity == 'user' and prediction_probs is not None:
+
+            # Check if the system should start generating a new response
+            if prediction_probs["state_1"] > DialogStateParams.RESPONSE_THRESHOLD:
+                self.emit_state_update(dialog_state='dialog_ss')
+                # print(f"Sid: {self.sid} Dialog state: start preparing response")
+                
+                # Trigger external callback
+                self.dialog_ss_callback()
+
+            # elif prediction_probs["state_2"] > threshold:
+            #     self.emit_state_update(dialog_state='dialog_el')
+            #     # print(f"Sid: {self.sid} Dialog state: continue listening")
+
+            else:
+                ## No point differentiating cl and el state for now.
+                self.emit_state_update(dialog_state='dialog_cl')
+
+    def emit_state_update(self, vad_state=None, dialog_state=None, generating=None, identity = None):
+        """Emit state updates to the GUI"""
+        state_data = {}
+        if vad_state is not None:
+            state_data['vad_state'] = vad_state
+            state_data['identity'] = identity 
+        if dialog_state is not None:
+            state_data['dialog_state'] = dialog_state
+        if generating is not None:
+            state_data['generating'] = generating
+        if state_data:
+            self.socketio.emit('state_update', state_data, to=self.sid)
+
+    def emit_vad_event(self, event_type, identity = None):
+        """Emit VAD events to the GUI"""
+        self.socketio.emit('ipu_event', {'event_type': event_type, 'identity': identity}, to=self.sid)
+
+    def dialog_ss_callback(self):
+        """
+        Callback function called when dialog_ss state is predicted.
+        """
+        # print(f"Dialog SS callback triggered for user {self.sid}")
+
+        # Emit dialog_ss callback event to GUI
+        self.emit_dialog_ss_callback()
+        
+    def emit_dialog_ss_callback(self, context_info = ''):
+        """Emit dialog_ss callback events to the GUI"""
+        self.socketio.emit('dialog_ss_callback', {'context_info': context_info}, to=self.sid)
+
