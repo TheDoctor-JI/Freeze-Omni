@@ -140,11 +140,6 @@ class DialogStateParams:
             self.stop_all_threads = False
             
 
-            # Thread references
-            self.vad_threads = {}
-            self.feature_gating_threads = {}
-            self.context_serializer_thread = None
-            self.dialog_state_prediction_thread = None
             
         except Exception as e:
             print(f"Error initializing DialogStateParams: {e}")
@@ -157,9 +152,11 @@ class DialogStateParams:
         try:
 
             # Audio queues for user and system separately
+            self.audio_data_input_queue = ProcPCMQueue()
+
             self.raw_pcm_queue = {
-                'user': PCMQueue(),
-                'system': PCMQueue()
+                'user': ProcPCMQueue(),
+                'system': ProcPCMQueue()
             }
             self.annotated_audio_queue = {
                 'user': ProcPCMQueue(),
@@ -210,6 +207,13 @@ class DialogStateParams:
     def start_all_threads(self):
         """Start all necessary threads for dialog state prediction"""
         try:
+            # Start the data input thread to receive audio chunks
+            self.data_input_thread = threading.Thread(
+                target=self.receive_raw_audio_chunk,
+                name="DataInput_Thread"
+            )
+            self.data_input_thread.start()
+
             # Start VAD threads for user and system
             if self.dialog_state_pred_configs['vad']['use_standalone_vad']:
                 for identity in ['user', 'system']:
@@ -261,20 +265,77 @@ class DialogStateParams:
             self.stop_all_threads = True
             if self.pipeline_obj:
                 self.pipeline_pool.release(self.pipeline_obj)
+
+            ## Wait for all threads to finish
+            if hasattr(self, 'data_input_thread'):
+                self.data_input_thread.join(timeout=2)
+
+            if hasattr(self, 'vad_threads'):
+                for thread in self.vad_threads.values():
+                    thread.join(timeout=2)
+
+            if hasattr(self, 'feature_gating_threads'):
+                for thread in self.feature_gating_threads.values():
+                    thread.join(timeout=2)
+
+            if hasattr(self, 'context_serializer_thread'):
+                self.context_serializer_thread.join(timeout=2)
+
+            if hasattr(self, 'dialog_state_prediction_thread'):
+                self.dialog_state_prediction_thread.join(timeout=2)
+
         except Exception as e:
             print(f"Error releasing resources: {e}")
 
-    def receive_raw_audio_chunk(self, audio_dat_dict: dict, identity: str):
-
-        # print(f"Sid: {self.sid} Received raw audio chunk for '{identity}' with size: {len(audio_dat_dict['audio'])}")
-
-        if(audio_dat_dict['sr'] != DialogStateParams.EXPECTED_SAMPLING_RATE):
-            raise ValueError(f"Expected audio sampling rate {DialogStateParams.EXPECTED_SAMPLING_RATE}, but got {audio_dat_dict['sr']}")
-        if(audio_dat_dict['enc'] != 's16le'):
-            raise ValueError(f"Expected audio encoding '{DialogStateParams.EXPECTED_ENCODING}', but got {audio_dat_dict['enc']}")
+    def enqueue_audio_data(self, audio_data, identity):
+        """
+        Enqueue audio data for processing.
         
-        audio_chunk = np.frombuffer(bytes(audio_dat_dict['audio']), dtype=np.int16)
-        self.raw_pcm_queue[identity].put(audio_chunk.astype(np.float32) / 32767.0)
+        Parameters:
+        - audio_data (dict): Audio data containing 'audio', 'sr', 'enc', and 'timestamp'.
+        - identity (str): Identity of the speaker, either 'user' or 'system'.
+        """
+        self.audio_data_input_queue.put((audio_data, identity))
+
+    def receive_raw_audio_chunk(self):
+
+        '''
+        Expect audio data of the form
+        {
+            'audio': <bytes>,  # Raw audio data in bytes
+            'sr': <int>,      # Sampling rate, e.g., 16000
+            'enc': <str>      # Encoding, e.g., 's16le'
+            'timestamp': <float> # timestamp for the audio chunk
+        }
+        as well as an identity string which can be either 'user' or 'system'.
+        from a queue which receives audio data from the top level server
+        '''
+
+        while not self.stop_all_threads:
+
+            # print(f"Sid: {self.sid} Received raw audio chunk for '{identity}' with size: {len(audio_dat_dict['audio'])}")
+
+            ## Get the audio data from the input queue
+            time.sleep(0.005)
+
+            data_item = self.audio_data_input_queue.get()
+
+            if data_item is None:
+                continue
+
+            audio_dat_dict, identity = data_item
+
+            ## Check the data format
+            if(audio_dat_dict['sr'] != DialogStateParams.EXPECTED_SAMPLING_RATE):
+                raise ValueError(f"Expected audio sampling rate {DialogStateParams.EXPECTED_SAMPLING_RATE}, but got {audio_dat_dict['sr']}")
+            if(audio_dat_dict['enc'] != 's16le'):
+                raise ValueError(f"Expected audio encoding '{DialogStateParams.EXPECTED_ENCODING}', but got {audio_dat_dict['enc']}")
+            
+            audio_chunk = np.frombuffer(bytes(audio_dat_dict['audio']), dtype=np.int16)
+            audio_dat_dict['audio'] = audio_chunk.astype(np.float32) / 32767.0
+
+            ## Enqueue the audio chunk to the respective queue for subsequent processing
+            self.raw_pcm_queue[identity].put(audio_dat_dict)
 
     def vad_annotation(self, identity):
         """
@@ -286,7 +347,7 @@ class DialogStateParams:
         
         while not self.stop_all_threads:
 
-            time.sleep(0.01)
+            time.sleep(0.005)
 
             audio_chunk = self.raw_pcm_queue[identity].get(chunk_size)
             if audio_chunk is None:
@@ -322,7 +383,7 @@ class DialogStateParams:
 
         while not self.stop_all_threads:
 
-            time.sleep(0.01)
+            time.sleep(0.005)
             
             # Get annotated audio chunk for the specific identity
             annotated_audio = self.annotated_audio_queue[identity].get()
@@ -376,7 +437,7 @@ class DialogStateParams:
         print(f"Sid: {self.sid} Starting context serializer thread.")
         
         while not self.stop_all_threads:
-            time.sleep(0.01)
+            time.sleep(0.005)
 
             ## Get the next feature to process
             feature_to_process = self.context_serializer.get_next_feature()
@@ -399,7 +460,7 @@ class DialogStateParams:
             
         while True:
 
-            time.sleep(0.01)
+            time.sleep(0.005)
             
             if self.stop_all_threads:
                 print(f"Sid: {self.sid} Stopping dialog state prediction thread")
