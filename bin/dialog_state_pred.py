@@ -274,7 +274,7 @@ class DialogStateParams:
             raise ValueError(f"Expected audio encoding '{DialogStateParams.EXPECTED_ENCODING}', but got {audio_dat_dict['enc']}")
         
         audio_chunk = np.frombuffer(bytes(audio_dat_dict['audio']), dtype=np.int16)
-        self.raw_pcm_queue[identity].put(audio_chunk.astype(np.float32) / 32768.0)
+        self.raw_pcm_queue[identity].put(audio_chunk.astype(np.float32) / 32767.0)
 
     def vad_annotation(self, identity):
         """

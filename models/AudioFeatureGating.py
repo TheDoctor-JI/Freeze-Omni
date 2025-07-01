@@ -55,7 +55,7 @@ class AudioFeatureGating:
         """Extracts fbank features from a raw audio chunk, managing state."""
         with torch.no_grad():
             audio = torch.tensor(audio_chunk)
-            sample_data = audio.reshape(1, -1, 1)[:, :, :1] * 32768
+            sample_data = audio.reshape(1, -1, 1)[:, :, :1] * 32767
             
             # Manage audio sample buffer for continuous STFT
             self.input_sample[:, :self.frame_overlap, :] = self.input_sample[:, -self.frame_overlap:, :].clone()

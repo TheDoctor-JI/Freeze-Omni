@@ -23,6 +23,7 @@ class AudioLLM(torch.nn.Module):
         self,
         encoder: torch.nn.Module,
         llm_path: str,
+        device: str = "cuda:0",  # Add device parameter
         freeze_llm: bool = True,
         enc_out_dim: int = 512,
         llm_embed_dim: int = 4096,
@@ -56,6 +57,7 @@ class AudioLLM(torch.nn.Module):
         chunk_size: int = -1,
     ):
         super().__init__()
+        self.device = torch.device(device)
 
         self.encoder_user = encoder
         self.encoder_system = copy.deepcopy(encoder)
@@ -234,10 +236,10 @@ class AudioLLM(torch.nn.Module):
             ## <|im_start|>system\n[PROMPT CONTENT]
             
             chat_prefix = self.tokenizer([extra_inputs['role_prompt']], 
-                return_tensors="pt")['input_ids'].to('cuda')  # Convert role to tokens and move to CUDA device
+                return_tensors="pt")['input_ids'].to(self.device)  # Convert role to tokens and move to CUDA device
         else:
             # If no 'role_prompt' is provided, use the default chat template and remove the last token (<|im_end|>)
-            chat_prefix = self.chat_template['role_prompt'][:, :-1].to('cuda')
+            chat_prefix = self.chat_template['role_prompt'][:, :-1].to(self.device)
         
         # Use the LLM decoder's word embedding layer to convert the chat prefix into embeddings
         inputs_embeds = self.llm_decoder.transformer.wte(chat_prefix)
@@ -311,7 +313,7 @@ class AudioLLM(torch.nn.Module):
                 chat_prefix_tokens = self.chat_template['prefix_for_user_utterance'].to(inputs_embeds.device)
                 chat_prefix_tokens = torch.cat((torch.tensor([[self.tokenizer.eod_id]]).to(inputs_embeds.device), chat_prefix_tokens), 1)## chat_prefix_tokens = <|im_end|>\n<|im_start|>user\n
             elif identity == 'system':
-                chat_prefix_tokens = self.chat_template['prefix_for_system_utterance'].to('cuda')## <|im_end|>\n<|im_start|>assistant\n
+                chat_prefix_tokens = self.chat_template['prefix_for_system_utterance'].to(self.device)## <|im_end|>\n<|im_start|>assistant\n
             else:
                 raise ValueError(f"Unknown identity: {identity}. Must be 'user' or 'system'.")
 
@@ -330,7 +332,7 @@ class AudioLLM(torch.nn.Module):
 
         # Add kv cache, i.e., context from previous steps integrating both user input and system output
         inputs['past_key_values'] = extra_inputs['past_key_values']
-        past_mask = torch.full([1, inputs['past_key_values'][0][0].size(2)],True).to('cuda')
+        past_mask = torch.full([1, inputs['past_key_values'][0][0].size(2)],True).to(self.device)
         attention_mask = torch.cat((past_mask, attention_mask), 1)
         inputs['attention_mask'] = attention_mask
 

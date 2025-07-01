@@ -8,6 +8,8 @@ from models.utils import init_encoder_llm, load_checkpoint
 class inferencePipeline():
     def __init__(self, args):
         self.args = args
+        self.device = args.get('device', 'cuda:0')
+        print(f"Using device: {self.device} for inference pipeline of freeze-omni model.")
 
         with open(self.args['model_path'] + "/audiollm/train.yaml", 'r') as fin:
             configs = yaml.safe_load(fin)
@@ -15,11 +17,10 @@ class inferencePipeline():
             configs['model_conf']['llm_path'] = self.args['llm_path']
 
         # Init asr model from configs
-        self.model = init_encoder_llm(configs)
+        self.model = init_encoder_llm(device = self.device, configs = configs)
         
         load_checkpoint(self.model, self.args['model_path'] + "/audiollm/final.pt")
-        device = torch.device('cuda')
-        self.model = self.model.to(device)
+        self.model = self.model.to(self.device)
         self.model.eval()
 
     def speech_dialogue(self, 
@@ -35,8 +36,8 @@ class inferencePipeline():
             ## input fbank
             feats = audio
             if feats is not None:
-                feats = feats.to('cuda')
-                feats_lengths = torch.tensor([feats.size(1)]).to('cuda')
+                feats = feats.to(self.device)
+                feats_lengths = torch.tensor([feats.size(1)]).to(self.device)
             else:
                 feats_lengths = None
 
@@ -65,13 +66,13 @@ class inferencePipeline():
                 else:
                     # Standard processing for user/system audio chunks
                     feats = audio
-                    feats_lengths = torch.tensor([feats.size(1)]).to('cuda')
+                    feats_lengths = torch.tensor([feats.size(1)]).to(self.device)
 
                     with torch.autocast(device_type="cuda", 
                             dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float32):
                         
                         prediction_probs, past_key_values, adapter_cache, encoder_cache, pe_index = self.model.recognize(
-                                    feats.to('cuda'),
+                                    feats.to(self.device),
                                     feats_lengths,
                                     extra_inputs=extra_inputs)
 

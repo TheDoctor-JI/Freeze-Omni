@@ -27,7 +27,7 @@ def load_checkpoint(model: torch.nn.Module, path: str) -> dict:
             configs = yaml.safe_load(fin)
     return configs
 
-def init_encoder_llm(configs):
+def init_encoder_llm(configs, device = 'cuda:0'):
     if configs['cmvn_file'] is not None:
         # read cmvn
         mean, istd = load_cmvn(configs['cmvn_file'], configs['is_json_cmvn'])
@@ -44,6 +44,6 @@ def init_encoder_llm(configs):
     # init speech encoder
     encoder = speechEncoder(input_dim, global_cmvn=global_cmvn, **configs['encoder_conf'])
     # init audioLLM
-    model = AudioLLM(encoder=encoder, **configs['model_conf'])
+    model = AudioLLM(encoder=encoder, device = device, **configs['model_conf'])
 
     return model
