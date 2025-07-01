@@ -48,4 +48,4 @@ echo ""
 # Start the server
 # Note: model_path and llm_path are now primarily controlled by the config file.
 # You can still override them here with --model_path or --llm_path if needed.
-CUDA_VISIBLE_DEVICES=1 python bin/server_alt.py --config "$CONFIG_FILE"
+CUDA_VISIBLE_DEVICES=1 python bin/dialog_state_pred_server.py --config "$CONFIG_FILE"

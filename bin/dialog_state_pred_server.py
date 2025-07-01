@@ -27,9 +27,8 @@ from web.parms import GlobalParams
 from web.pool import pipelineObjectPool
 from web.pem import generate_self_signed_cert
 from web.queue import PCMQueue, ProcPCMQueue, ThreadSafeQueue
-from periphrals.PureVAD import PureVAD
-from periphrals.AudioFeatureGating import AudioFeatureGating
-from periphrals.ContextSerializer import ContextSerializer
+from models.AudioFeatureGating import AudioFeatureGating
+from web.ContextSerializer import ContextSerializer
 
 def get_args():
     parser = argparse.ArgumentParser(description='Freeze-Omni Dialog State Server')
@@ -137,6 +136,7 @@ class DialogStateParams:
             }
 
             if server_configs['vad']['use_standalone_vad']:
+                from periphrals.PureVAD import PureVAD
                 self.standalone_vad = {
                     'user': PureVAD(
                         min_silent_duration_second=server_configs['vad']['min_silent_duration_second'],
