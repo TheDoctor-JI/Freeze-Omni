@@ -706,3 +706,43 @@ class DialogStateParams:
         """Emit dialog_ss callback events to the GUI"""
         self.socketio.emit('dialog_ss_callback', {'context_info': context_info}, to=self.sid)
 
+    def warmup_compiled_methods(self):
+        ## Push a few audio samples to feature gating queue of both human and system
+        num_of_cl_chunks = 5
+        for identity in ['user', 'system']:
+            chunk_size = self.standalone_vad[identity].get_chunk_size()
+            ## Push directly to the feature gating queue
+            self.annotated_audio_queue[identity].put({
+                'audio': np.zeros(chunk_size, dtype=np.float32),
+                'sr': DialogStateParams.EXPECTED_SAMPLING_RATE,
+                'enc': DialogStateParams.EXPECTED_ENCODING,
+                'status': 'ipu_sl',
+                'time_stamp': time.time()
+            })
+            for i in range(num_of_cl_chunks):
+                self.annotated_audio_queue[identity].put({
+                    'audio': np.zeros(chunk_size, dtype=np.float32),
+                    'sr': DialogStateParams.EXPECTED_SAMPLING_RATE,
+                    'enc': DialogStateParams.EXPECTED_ENCODING,
+                    'status': 'ipu_cl',
+                    'time_stamp': time.time()
+                })
+            self.annotated_audio_queue[identity].put({
+                'audio': np.zeros(chunk_size, dtype=np.float32),
+                'sr': DialogStateParams.EXPECTED_SAMPLING_RATE,
+                'enc': DialogStateParams.EXPECTED_ENCODING,
+                'status': 'ipu_el',
+                'time_stamp': time.time()
+            })
+            time.sleep(1)  # Give some time for the feature gating thread to process these samples before pushing for the other identity
+
+        time.sleep(1)
+
+        ## Wait for the feature gating threads to finish processing
+        while self.processed_pcm_queue.queue.qsize() > 0:
+            time.sleep(0.1)
+
+        ## Wait a bit longer to make sure the processing of the last chunk is done
+        time.sleep(2)
+
+        print(f"DialogParams: Warmed up compiled methods for user {self.sid}.")

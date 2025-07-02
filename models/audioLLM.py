@@ -18,6 +18,9 @@ from models.adapter import *
 IGNORE_ID = -1
 
 
+
+
+
 class AudioLLM(torch.nn.Module):
     def __init__(
         self,
@@ -207,7 +210,7 @@ class AudioLLM(torch.nn.Module):
 
 
         if self.predict_usr_state:
-            self.predictor_head = torch.nn.Linear(llm_embed_dim, predict_usr_state)
+            self.predictor_head = nn.Linear(llm_embed_dim, predict_usr_state).to(self.device) 
         else:
             self.predictor_head = None
 
@@ -231,7 +234,8 @@ class AudioLLM(torch.nn.Module):
         ## Compile performance-critical methods
         self.llm_decoder = self.llm_decoder.to(self.device)
         self._compile_methods()
-        self.warmup_compiled_methods()
+
+        ## Warm up will be done in the main service code using data of the same dimensionality as actual data
 
     def _compile_methods(self):
         """Compile performance-critical methods"""
@@ -241,6 +245,11 @@ class AudioLLM(torch.nn.Module):
             self.llm_decoder,
             mode="reduce-overhead"
         )
+
+        # self._prediction_head_forward = torch.compile(
+        #     self._prediction_head_forward,
+        #     mode="reduce-overhead"
+        # )
         
         # Compile encoders for inference
         try:
@@ -268,54 +277,7 @@ class AudioLLM(torch.nn.Module):
         except Exception as e:
             print(f"Warning: Could not compile adapters: {e}")
 
-    def warmup_compiled_methods(self, dummy_speech_length: int = 1600):
-        """Warmup compiled methods to trigger compilation"""
-        print("Warming up compiled methods...")
-        
-        with torch.autocast(device_type="cuda", 
-                    dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float32):
 
-            with torch.no_grad():
-                # Create dummy inputs
-                dummy_speech = torch.randn(1, dummy_speech_length).to(self.device)
-                dummy_inputs_embeds = torch.randn(1, 10, self.llm_embed_dim).half().to(self.device)
-                dummy_attention_mask = torch.ones(1, 10).bool().to(self.device)
-                
-                # Warmup encoders
-                if hasattr(self.encoder_user, '__wrapped__'):  # Check if compiled
-                    print("Warming up user encoder...")
-                    buffer = [None] * self.encoder_user.enc[1].num_blocks
-                    self.encoder_user.infer(dummy_speech, buffer, 0, None, 0)
-                    
-                if hasattr(self.encoder_system, '__wrapped__'):
-                    print("Warming up system encoder...")
-                    buffer = [None] * self.encoder_system.enc[1].num_blocks
-                    self.encoder_system.infer(dummy_speech, buffer, 0, None, 0)
-                
-                # Warmup adapters
-                if hasattr(self.adpter_user, '__wrapped__'):
-                    print("Warming up user adapter...")
-                    dummy_encoder_out = torch.randn(1, 100, self.enc_out_dim).to(self.device)
-                    dummy_encoder_mask = torch.ones(1, 1, 100).bool().to(self.device)
-                    self.adpter_user(dummy_encoder_out, dummy_encoder_mask)
-
-                if hasattr(self.adpter_system, '__wrapped__'):
-                    print("Warming up system adapter...")
-                    dummy_encoder_out = torch.randn(1, 100, self.enc_out_dim).to(self.device)
-                    dummy_encoder_mask = torch.ones(1, 1, 100).bool().to(self.device)
-                    self.adpter_system(dummy_encoder_out, dummy_encoder_mask)
-
-                # # Warmup LLM decoder
-                print("Warming up LLM decoder...")
-                self.llm_decoder.model(
-                    inputs_embeds=dummy_inputs_embeds,
-                    attention_mask=dummy_attention_mask,
-                    use_cache=True,
-                    return_dict=True
-                )
-            
-        print("Warmup complete! Compiled methods are ready.")
-        
     def initialize_chat_template_embeds(self, identity):
 
         if self.chat_template is not None:
@@ -504,26 +466,21 @@ class AudioLLM(torch.nn.Module):
         token_index = torch.multinomial(probs, 1)
         return token_index.unsqueeze(0)
     
-    def _llm_forward_core(self, 
-                        inputs_embeds: torch.Tensor, 
-                         attention_mask: torch.Tensor,
-                         past_key_values: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor]:
+    def _llm_forward_core(self, input_context: dict) -> Tuple[torch.Tensor, torch.Tensor]:
         """Core LLM forward pass - optimized for compilation"""
-        inputs = {
-            'inputs_embeds': inputs_embeds,
-            'attention_mask': attention_mask,
-        }
-        if past_key_values is not None:
-            inputs['past_key_values'] = past_key_values
                 
-        outputs = self.llm_decoder.model(**inputs)
+        outputs = self.llm_decoder.model(**input_context)
 
         return outputs['last_hidden_state'], outputs['past_key_values']
     
     def _prediction_head_forward(self, hidden_state: torch.Tensor) -> torch.Tensor:
         """Separate prediction head forward pass"""
-        return self.predictor_head(hidden_state)
-    
+        state_logits = self.predictor_head(hidden_state)[0, :]
+        prob = torch.nn.functional.softmax(state_logits[:, :-1], dim=-1)
+        state_prob = prob[-1].clone()
+        
+        return state_prob
+
     def _generate_one_step( self, inputs, do_prediction):
         """
         Generates the model's next output based on the current input and state.
@@ -539,31 +496,21 @@ class AudioLLM(torch.nn.Module):
         """
 
 
-        # Extract tensors for compiled functions
-        inputs_embeds = inputs['inputs_embeds']
-        attention_mask = inputs['attention_mask']
-        past_key_values = inputs.get('past_key_values', None)
-        
         # #Note that this forward pass automatically update the past_key_values to be the most updated, i.e., the state used in this decoding step
-        last_hidden_state, new_past_key_values = self._llm_forward_core(
-            inputs_embeds, attention_mask, past_key_values
-        )
-
+        last_hidden_state, new_past_key_values = self._llm_forward_core(inputs)
 
 
         prediction_probs = None
         if do_prediction and self.predictor_head is not None:
+
             # Use compiled prediction head
-            state_logits = self._prediction_head_forward(last_hidden_state)[0, :]
-            prob = torch.nn.functional.softmax(state_logits[:, :-1], dim=-1)
-            state_prob = prob[-1].clone()
-            
+            state_prob = self._prediction_head_forward(last_hidden_state)
+                
             # Extract probabilities (this part stays uncompiled for flexibility)
             prediction_probs = {
                 "state_1": state_prob[1].item(),
                 "state_2": state_prob[2].item()
             }
-
 
         # We only update context (past_key_values), no token generation. If it's not user input, we just return the past_key_values but do not return prediction_probs.
         return prediction_probs, new_past_key_values, last_hidden_state
