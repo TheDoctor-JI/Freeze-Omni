@@ -24,6 +24,7 @@ IGNORE_ID = -1
 class AudioLLM(torch.nn.Module):
     def __init__(
         self,
+        logger,
         encoder: torch.nn.Module,
         llm_path: str,
         device: str = "cuda:0",  # Add device parameter
@@ -61,6 +62,8 @@ class AudioLLM(torch.nn.Module):
     ):
         super().__init__()
         self.device = torch.device(device)
+
+        self.logger = logger
 
         self.encoder_user = encoder
         self.encoder_system = copy.deepcopy(encoder)
@@ -241,11 +244,13 @@ class AudioLLM(torch.nn.Module):
         """Compile performance-critical methods"""
 
         # # Compile the LLM decoder model
-        self.llm_decoder = torch.compile(
-            self.llm_decoder,
-            mode="reduce-overhead"
-        )
-
+        try:
+            self.llm_decoder = torch.compile(
+                self.llm_decoder,
+                mode="reduce-overhead"
+            )
+        except Exception as e:
+            self.logger.warning(f"Warning: Could not compile LLM decoder: {e}")
         
         # Compile encoders for inference
         try:
@@ -258,7 +263,7 @@ class AudioLLM(torch.nn.Module):
                 mode="reduce-overhead"
             )
         except Exception as e:
-            print(f"Warning: Could not compile encoders: {e}")
+            self.logger.warning(f"Warning: Could not compile encoders: {e}")
         
         # Compile adapters
         try:
@@ -271,7 +276,7 @@ class AudioLLM(torch.nn.Module):
                 mode="reduce-overhead"
             )
         except Exception as e:
-            print(f"Warning: Could not compile adapters: {e}")
+            self.logger.warning(f"Warning: Could not compile adapters: {e}")
 
     def initialize_chat_template_embeds(self, identity):
 

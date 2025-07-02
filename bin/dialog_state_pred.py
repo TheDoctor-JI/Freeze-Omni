@@ -70,9 +70,11 @@ class DialogStateParams:
     RESPONSE_THRESHOLD = DIALOG_STATE_PRED_CONFIGS['dialog_state_decision']['resp_threshold']
     SLEEP_INTERVAL = DIALOG_STATE_PRED_CONFIGS['thread_sleep_interval']
 
-    def __init__(self, sid, socketio):
+    def __init__(self, sid, socketio, parent_logger):
         try:
             self.sid = sid
+
+            self.logger = parent_logger.getChild(f"DialogStateParams")
 
             ## Config for dialog state prediction
             self.dialog_state_pred_configs = DialogStateParams.DIALOG_STATE_PRED_CONFIGS
@@ -85,7 +87,8 @@ class DialogStateParams:
             self.pipeline_obj = self.pipeline_pool.acquire()
             if self.pipeline_obj is None:
                 raise Exception("Failed to get pipeline object from pool")
-                
+            else:
+                self.logger.debug(f"Acquired pipeline object {self.pipeline_obj.id} for dialog state prediction.")
 
             ## Internal parameters for this class
 
@@ -144,7 +147,7 @@ class DialogStateParams:
             
             
         except Exception as e:
-            print(f"Error initializing DialogStateParams: {e}")
+            self.logger.error(f"Error initializing DialogStateParams: {e}")
             self.release()
             raise
     
@@ -202,7 +205,7 @@ class DialogStateParams:
             }
 
         except Exception as e:
-            print(f"Error resetting context: {e}")
+            self.logger.error(f"Error resetting context: {e}")
             raise
     
     def start_all_threads(self):
@@ -251,7 +254,7 @@ class DialogStateParams:
             self.dialog_state_prediction_thread.start()
 
         except Exception as e:
-            print(f"Error starting threads: {e}")
+            self.logger.error(f"Error starting threads: {e}")
             raise
 
     def set_dialog_callback(self, callback):
@@ -288,7 +291,7 @@ class DialogStateParams:
                 self.dialog_state_prediction_thread.join(timeout=2)
 
         except Exception as e:
-            print(f"Error releasing resources: {e}")
+            self.logger.error(f"Error releasing resources: {e}")
 
     def enqueue_audio_data(self, identity, audio_data_dict):
         """
@@ -333,7 +336,7 @@ class DialogStateParams:
                 if data_item is None:
                     continue
 
-                # print(f"Sid: {self.sid} Received raw audio chunk")
+                # self.logger.debug(f"Sid: {self.sid} Received raw audio chunk")
 
                 audio_dat_dict, identity = data_item
 
@@ -358,7 +361,7 @@ class DialogStateParams:
                 self.raw_pcm_queue[identity].put(new_audio_dat_dict)
         
         except Exception as e:
-            print(f"Error initializing DialogStateParams: {e}")
+            self.logger.error(f"Error initializing DialogStateParams: {e}")
             self.release()
             raise
 
@@ -371,7 +374,7 @@ class DialogStateParams:
         try:
             
             chunk_size = self.standalone_vad[identity].get_chunk_size()
-            print(f"Sid: {self.sid} Starting standalone VAD thread for '{identity}' with chunk size: {chunk_size}")
+            self.logger.info(f"Sid: {self.sid} Starting standalone VAD thread for '{identity}' with chunk size: {chunk_size}")
             
             
             aggregated_audio_data_dict = {
@@ -428,13 +431,13 @@ class DialogStateParams:
                     }
 
                 # if(self.debug_time):
-                #     print(f"Sid: {self.sid} VAD received raw audio chunk of size: {len(sufficient_audio_data_dict['audio'])} for '{identity}'")
+                #     self.logger.debug(f"Sid: {self.sid} VAD received raw audio chunk of size: {len(sufficient_audio_data_dict['audio'])} for '{identity}'")
                     
                 # Run VAD prediction to get annotated audio
                 annotated_audio = self.standalone_vad[identity].predict(sufficient_audio_data_dict)
 
                 # if(self.debug_time):
-                #     print(f"Sid: {self.sid} VAD annotation done for {identity}.")
+                #     self.logger.debug(f"Sid: {self.sid} VAD annotation done for {identity}.")
                     
 
                 # Emit VAD events for monitoring GUI (only for user)
@@ -444,7 +447,7 @@ class DialogStateParams:
                     self.emit_state_update(vad_state=True, identity=identity)
 
                     if(self.debug_time):##VAD annotation usually takes less than 10ms
-                        print(f"Sid: {self.sid} SL chunk obtained for {identity}.")
+                        self.logger.debug(f"Sid: {self.sid} SL chunk obtained for {identity}.")
 
                 elif status == 'ipu_el':
                     self.emit_vad_event(status, identity=identity)
@@ -456,10 +459,10 @@ class DialogStateParams:
                 # Put annotated audio into the queue for the feature gating thread
                 self.annotated_audio_queue[identity].put(annotated_audio)
 
-            print(f"Sid: {self.sid} Stopping standalone VAD thread for '{identity}'")
+            self.logger.info(f"Sid: {self.sid} Stopping standalone VAD thread for '{identity}'")
         
         except Exception as e:
-            print(f"Error initializing DialogStateParams: {e}")
+            self.logger.error(f"Error initializing DialogStateParams: {e}")
             self.release()
             raise
 
@@ -469,7 +472,7 @@ class DialogStateParams:
         and gates the features to the serializer
         """
         try:
-            print(f"Sid: {self.sid} Starting feature gating thread for '{identity}'.")
+            self.logger.info(f"Sid: {self.sid} Starting feature gating thread for '{identity}'.")
 
             while not self.stop_all_threads:
 
@@ -482,7 +485,7 @@ class DialogStateParams:
                 if(annotated_audio is None):
                     continue
 
-                # print(f"Sid: {self.sid} Received annotated audio chunk with status: {annotated_audio['status']}, size: {len(annotated_audio['audio'])}")
+                # self.logger.debug(f"Sid: {self.sid} Received annotated audio chunk with status: {annotated_audio['status']}, size: {len(annotated_audio['audio'])}")
 
 
                 # Process chunk to extract and gate features
@@ -496,7 +499,7 @@ class DialogStateParams:
 
 
                     # if self.debug_time:
-                    #     print(f"Sid: {self.sid} Approved audio feature, status: {gated_feature_data['status']}, identity: {identity}")
+                    #     self.logger.debug(f"Sid: {self.sid} Approved audio feature, status: {gated_feature_data['status']}, identity: {identity}")
 
 
                     if 'time_stamp' in annotated_audio:
@@ -505,7 +508,7 @@ class DialogStateParams:
                     if gated_feature_data['status'] == 'ipu_sl':
 
                         # if(self.debug_time):##fbank feature gating usually takes around 20ms
-                        #     print(f"Sid: {self.sid} SL chunk approved for {identity}.")
+                        #     self.logger.debug(f"Sid: {self.sid} SL chunk approved for {identity}.")
 
                         for i, feature in enumerate(gated_feature_data['feature_last_chunk']):
                             feature_item = {
@@ -516,7 +519,7 @@ class DialogStateParams:
                             }
 
                             # if self.debug_time:
-                            #     print(f"Sid: {self.sid} Adding feature chunk, status: {feature_item['status']}, identity: {identity}")
+                            #     self.logger.debug(f"Sid: {self.sid} Adding feature chunk, status: {feature_item['status']}, identity: {identity}")
 
                             self.context_serializer.add_feature_chunk(feature_item)
                         
@@ -528,21 +531,21 @@ class DialogStateParams:
                         }
 
                         # if self.debug_time:
-                        #     print(f"Sid: {self.sid} Adding feature chunk, status: {feature_item['status']}, identity: {identity}")
+                        #     self.logger.debug(f"Sid: {self.sid} Adding feature chunk, status: {feature_item['status']}, identity: {identity}")
 
                         self.context_serializer.add_feature_chunk(feature_item)
 
                     else:
 
                         # if self.debug_time:
-                        #     print(f"Sid: {self.sid} Adding feature chunk, status: {feature_item['status']}, identity: {identity}")
+                        #     self.logger.debug(f"Sid: {self.sid} Adding feature chunk, status: {feature_item['status']}, identity: {identity}")
 
                         self.context_serializer.add_feature_chunk(gated_feature_data)
 
-            print(f"Sid: {self.sid} Stopping feature gating thread for '{identity}'.")
+            self.logger.info(f"Sid: {self.sid} Stopping feature gating thread for '{identity}'.")
 
         except Exception as e:
-            print(f"Error initializing DialogStateParams: {e}")
+            self.logger.error(f"Error initializing DialogStateParams: {e}")
             self.release()
             raise
 
@@ -554,7 +557,7 @@ class DialogStateParams:
 
         try:
 
-            print(f"Sid: {self.sid} Starting context serializer thread.")
+            self.logger.info(f"Sid: {self.sid} Starting context serializer thread.")
             
             while not self.stop_all_threads:
                 time.sleep(DialogStateParams.SLEEP_INTERVAL)
@@ -568,14 +571,14 @@ class DialogStateParams:
                 ## Send to the main processing queue for dialog state prediction
                 if feature_to_process is not None:
                     # if self.debug_time:
-                    #     print(f"Sid: {self.sid} Comitting feature to processed_pcm_queue, status: {feature_to_process['status']}, identity: {feature_to_process.get('identity', 'N/A')}")
+                    #     self.logger.debug(f"Sid: {self.sid} Comitting feature to processed_pcm_queue, status: {feature_to_process['status']}, identity: {feature_to_process.get('identity', 'N/A')}")
 
                     self.processed_pcm_queue.put(feature_to_process)
             
-            print(f"Sid: {self.sid} Stopping context serializer thread.")
+            self.logger.info(f"Sid: {self.sid} Stopping context serializer thread.")
 
         except Exception as e:
-            print(f"Error initializing DialogStateParams: {e}")
+            self.logger.error(f"Error initializing DialogStateParams: {e}")
             self.release()
             raise
 
@@ -586,14 +589,14 @@ class DialogStateParams:
         """
         try:
 
-            print(f"Sid: {self.sid} Starting dialog state prediction thread")
+            self.logger.info(f"Sid: {self.sid} Starting dialog state prediction thread")
                 
             while True:
 
                 time.sleep(DialogStateParams.SLEEP_INTERVAL)
                 
                 if self.stop_all_threads:
-                    print(f"Sid: {self.sid} Stopping dialog state prediction thread")
+                    self.logger.info(f"Sid: {self.sid} Stopping dialog state prediction thread")
                     break
                         
                 # Get processed audio from the gated queue
@@ -601,19 +604,19 @@ class DialogStateParams:
                 if feature_data is None:
                     continue
                     
-                # print(f"Sid: {self.sid} Processing approved audio for dialog state prediction, status: {feature_data['status']}, identity: {feature_data.get('identity', 'N/A')}")
+                # self.logger.debug(f"Sid: {self.sid} Processing approved audio for dialog state prediction, status: {feature_data['status']}, identity: {feature_data.get('identity', 'N/A')}")
                 
                 # Always run forward processing
                 if self.debug_time and feature_data['status'] == 'ipu_sl':
-                    print(f"Sid: {self.sid} Starting dialog state prediction for ipu_sl feature data.")
+                    self.logger.debug(f"Sid: {self.sid} Starting dialog state prediction for ipu_sl feature data.")
                     
                 self.llm_prefill(feature_data)
 
                 if self.debug_time and feature_data['status'] == 'ipu_sl':##Dialog state prediction takes around 300ms
-                    print(f"Sid: {self.sid} Dialog state prediction done.")
+                    self.logger.debug(f"Sid: {self.sid} Dialog state prediction done.")
 
         except Exception as e:
-            print(f"Error initializing DialogStateParams: {e}")
+            self.logger.error(f"Error initializing DialogStateParams: {e}")
             self.release()
             raise
         
@@ -629,7 +632,7 @@ class DialogStateParams:
         identity = data['identity']
         
         
-        # print(f"Sid: {self.sid} Processing audio chunk with status: {data['status']} from {identity}")
+        # self.logger.debug(f"Sid: {self.sid} Processing audio chunk with status: {data['status']} from {identity}")
         
 
         # 1. Assemble the context for this processing step
@@ -663,14 +666,14 @@ class DialogStateParams:
             # Check if the system should start generating a new response
             if prediction_probs["state_1"] > DialogStateParams.RESPONSE_THRESHOLD:
                 self.emit_state_update(dialog_state='dialog_ss')
-                # print(f"Sid: {self.sid} Dialog state: start preparing response")
+                # self.logger.debug(f"Sid: {self.sid} Dialog state: start preparing response")
                 
                 # Trigger external callback
                 self.dialog_ss_callback()
 
             # elif prediction_probs["state_2"] > threshold:
             #     self.emit_state_update(dialog_state='dialog_el')
-            #     # print(f"Sid: {self.sid} Dialog state: continue listening")
+            #     # self.logger.debug(f"Sid: {self.sid} Dialog state: continue listening")
 
             else:
                 ## No point differentiating cl and el state for now.
@@ -697,7 +700,7 @@ class DialogStateParams:
         """
         Callback function called when dialog_ss state is predicted.
         """
-        # print(f"Dialog SS callback triggered for user {self.sid}")
+        # self.logger.debug(f"Dialog SS callback triggered for user {self.sid}")
 
         # Emit dialog_ss callback event to GUI
         self.emit_dialog_ss_callback()
@@ -745,4 +748,4 @@ class DialogStateParams:
         ## Wait a bit longer to make sure the processing of the last chunk is done
         time.sleep(2)
 
-        print(f"DialogParams: Warmed up compiled methods for user {self.sid}.")
+        self.logger.info(f"DialogParams: Warmed up compiled methods for user {self.sid}.")

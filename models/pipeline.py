@@ -5,11 +5,18 @@ import re
 
 from models.utils import init_encoder_llm, load_checkpoint
 
+from logger.logger import setup_logger
+import shortuuid
+
 class inferencePipeline():
     def __init__(self, args):
         self.args = args
         self.device = args.get('device', 'cuda:0')
-        print(f"Using device: {self.device} for inference pipeline of freeze-omni model.")
+        self.id = shortuuid.uuid()
+
+        self.logger = setup_logger(f'FOPipe_{self.id}')
+
+        self.logger.info(f"Using device: {self.device} for inference pipeline of freeze-omni model.")
 
         with open(self.args['model_path'] + "/audiollm/train.yaml", 'r') as fin:
             configs = yaml.safe_load(fin)
@@ -17,7 +24,7 @@ class inferencePipeline():
             configs['model_conf']['llm_path'] = self.args['llm_path']
 
         # Init asr model from configs
-        self.model = init_encoder_llm(device = self.device, configs = configs)
+        self.model = init_encoder_llm(device = self.device, configs = configs, logger=self.logger)
         
         load_checkpoint(self.model, self.args['model_path'] + "/audiollm/final.pt")
         self.model = self.model.to(self.device)

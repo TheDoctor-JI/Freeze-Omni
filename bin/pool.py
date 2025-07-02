@@ -56,6 +56,7 @@ class inferencePipelineObject:
     def __init__(self, configs):
         self.user_count = 0
         self.pipeline_proc = inferencePipeline(configs)
+        self.id = self.pipeline_proc.id
 
 class pipelineObjectPool:
     def __init__(self, size, configs):
