@@ -223,7 +223,34 @@ class AudioLLM(torch.nn.Module):
             "hyps": 7,
             "/hyps": 8,
         }
+
+        ## Pre-compute chat template embeddings
+        self.system_chat_prefix_embeds, self.system_chat_prefix_mask = self.initialize_chat_template_embeds('system')
+        self.user_chat_prefix_embeds, self.user_chat_prefix_mask = self.initialize_chat_template_embeds('user')
         
+
+    def initialize_chat_template_embeds(self, identity):
+
+        if self.chat_template is not None:
+            ## Apply chat template.
+            if identity == 'user':
+                chat_prefix_tokens = self.chat_template['prefix_for_user_utterance']
+                chat_prefix_tokens = torch.cat((torch.tensor([[self.tokenizer.eod_id]]), chat_prefix_tokens), 1)## chat_prefix_tokens = <|im_end|>\n<|im_start|>user\n
+            elif identity == 'system':
+                chat_prefix_tokens = self.chat_template['prefix_for_system_utterance']## <|im_end|>\n<|im_start|>assistant\n
+            else:
+                raise ValueError(f"Unknown identity: {identity}. Must be 'user' or 'system'.")
+
+            chat_prefix_embeds = self.llm_decoder.transformer.wte(chat_prefix_tokens).to(self.device)
+            chat_prefix_mask = torch.full(chat_prefix_tokens.shape, 
+                            True).to(self.device)
+
+            return chat_prefix_embeds, chat_prefix_mask
+
+        else:
+            return None, None
+
+
     def set_system_role(
         self,
         extra_inputs: Optional[dict] = None,
@@ -265,7 +292,6 @@ class AudioLLM(torch.nn.Module):
     def recognize(
         self,
         speech: torch.Tensor,
-        speech_lengths: torch.Tensor,
         extra_inputs: Optional[dict] = None,
     ):
         ## At the beginning, past_key_values will only contain system role/prompt
@@ -288,8 +314,6 @@ class AudioLLM(torch.nn.Module):
             current_adapter = self.adpter_system
 
 
-
-
         # 2. Process audio through selected Encoder and Adapter
         # Encoder
         if buffer is None:
@@ -306,20 +330,20 @@ class AudioLLM(torch.nn.Module):
         attention_mask = encoder_mask.squeeze(1) # 1, T
 
 
-        # 3. Event-Based Chat Template Application
-        if self.chat_template is not None and status == 'ipu_sl':
-            ## Apply chat template.
-            if identity == 'user':
-                chat_prefix_tokens = self.chat_template['prefix_for_user_utterance'].to(inputs_embeds.device)
-                chat_prefix_tokens = torch.cat((torch.tensor([[self.tokenizer.eod_id]]).to(inputs_embeds.device), chat_prefix_tokens), 1)## chat_prefix_tokens = <|im_end|>\n<|im_start|>user\n
-            elif identity == 'system':
-                chat_prefix_tokens = self.chat_template['prefix_for_system_utterance'].to(self.device)## <|im_end|>\n<|im_start|>assistant\n
-            else:
-                raise ValueError(f"Unknown identity: {identity}. Must be 'user' or 'system'.")
+        # 3. Some identity based notion
+        if identity == 'user':
+            do_prediction = True
+            chat_prefix_embeds = self.user_chat_prefix_embeds
+            chat_prefix_mask = self.user_chat_prefix_mask
+        elif identity == 'system':
+            do_prediction = False
+            chat_prefix_embeds = self.system_chat_prefix_embeds
+            chat_prefix_mask = self.system_chat_prefix_mask
+        else:
+            raise ValueError(f"Unknown identity: {identity}. Must be 'user' or 'system'.")
 
-            chat_prefix_embeds = self.llm_decoder.transformer.wte(chat_prefix_tokens)
-            chat_prefix_mask = torch.full(chat_prefix_tokens.shape, 
-                            True).to(inputs_embeds.device)
+        ## Apply chat template
+        if self.chat_template is not None and status == 'ipu_sl':
             inputs_embeds = torch.cat((chat_prefix_embeds, inputs_embeds), 1)
             attention_mask = torch.cat((chat_prefix_mask, attention_mask), 1)
 
@@ -337,7 +361,12 @@ class AudioLLM(torch.nn.Module):
         inputs['attention_mask'] = attention_mask
 
         ## This is where we actually run forward inference.
-        prediction_probs, past_key_values, _ = self._generate_one_step(copy.deepcopy(inputs), identity=identity)
+        prediction_probs, past_key_values, _ = self._generate_one_step(
+                                                    ## TBD: no need to deepcopy here because we do not have anything running in parallel in this code
+                                                    # copy.deepcopy(inputs), 
+                                                    inputs,
+                                                    do_prediction=do_prediction
+                                                )
                                                 
         return prediction_probs, past_key_values, cnn_cache, buffer, pe_index
     
@@ -389,13 +418,13 @@ class AudioLLM(torch.nn.Module):
         token_index = torch.multinomial(probs, 1)
         return token_index.unsqueeze(0)
     
-    def _generate_one_step( self, inputs, identity):
+    def _generate_one_step( self, inputs, do_prediction):
         """
         Generates the model's next output based on the current input and state.
 
         Parameters:
         - inputs: The input tensor containing the model's input data.
-        - identity: The identity of the speaker ('user' or 'system').
+        - do_prediction: whether to perform prediction or just update the context.
 
         Returns:
         - prediction_probs: A dictionary with state probabilities if identity is 'user', otherwise None.
@@ -408,7 +437,7 @@ class AudioLLM(torch.nn.Module):
         prediction_probs = None
 
         # Prediction head is only used for user input to decide if the system should speak.
-        if identity == 'user' and self.predictor_head is not None:
+        if do_prediction and self.predictor_head is not None:
             state_logits = self.predictor_head(
                         outputs['last_hidden_state'])[0, :]
             prob = F.softmax(state_logits[:, :-1])

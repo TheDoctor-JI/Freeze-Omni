@@ -37,9 +37,9 @@ class inferencePipeline():
             feats = audio
             if feats is not None:
                 feats = feats.to(self.device)
-                feats_lengths = torch.tensor([feats.size(1)]).to(self.device)
-            else:
-                feats_lengths = None
+                # feats_lengths = torch.tensor([feats.size(1)]).to(self.device)
+            # else:
+            #     feats_lengths = None
 
             extra_inputs = {}
             extra_inputs['identity'] = identity
@@ -64,16 +64,17 @@ class inferencePipeline():
                     return None, past_key_values, None, None, None
                     
                 else:
-                    # Standard processing for user/system audio chunks
-                    feats = audio
-                    feats_lengths = torch.tensor([feats.size(1)]).to(self.device)
+                    # # Standard processing for user/system audio chunks
+                    # feats = audio
+                    # feats_lengths = torch.tensor([feats.size(1)]).to(self.device)
 
                     with torch.autocast(device_type="cuda", 
                             dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float32):
                         
                         prediction_probs, past_key_values, adapter_cache, encoder_cache, pe_index = self.model.recognize(
-                                    feats.to(self.device),
-                                    feats_lengths,
+                                    speech=feats,
+                                    # feats.to(self.device),
+                                    # feats_lengths,
                                     extra_inputs=extra_inputs)
 
                     # Return the updated context and prediction results

@@ -588,17 +588,16 @@ class DialogStateParams:
                 if feature_data is None:
                     continue
                     
-                print(f"Sid: {self.sid} Processing approved audio for dialog state prediction, status: {feature_data['status']}, identity: {feature_data.get('identity', 'N/A')}")
+                # print(f"Sid: {self.sid} Processing approved audio for dialog state prediction, status: {feature_data['status']}, identity: {feature_data.get('identity', 'N/A')}")
                 
                 # Always run forward processing
                 if self.debug_time:
-                    start_time = time.time()
+                    print(f"Sid: {self.sid} Starting dialog state prediction for feature data with status: {feature_data['status']} and identity: {feature_data.get('identity', 'N/A')}")
                     
                 self.llm_prefill(feature_data)
 
                 if self.debug_time:
-                    elapsed_time = time.time() - start_time
-                    print(f"Sid: {self.sid} Dialog state prediction processing time: {elapsed_time:.4f} seconds")
+                    print(f"Sid: {self.sid} Dialog state prediction done.")
 
         except Exception as e:
             print(f"Error initializing DialogStateParams: {e}")
@@ -621,7 +620,7 @@ class DialogStateParams:
         
 
         # 1. Assemble the context for this processing step
-        outputs = {
+        context_input = {
             'past_key_values': self.past_key_values, # Shared conversational history
             'identity': identity,
             'status': data['status'],
@@ -632,7 +631,7 @@ class DialogStateParams:
 
         # 2. Call the pipeline
         prediction_probs, past_key_values, cnn_cache, buffer, pe_index = self.pipeline_obj.pipeline_proc.speech_dialogue(
-            torch.tensor(data['feature']), **outputs
+            torch.tensor(data['feature']), **context_input
         )
 
 
