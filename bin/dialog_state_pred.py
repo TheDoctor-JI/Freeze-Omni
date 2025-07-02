@@ -76,6 +76,8 @@ class DialogStateParams:
             ## Config for dialog state prediction
             self.dialog_state_pred_configs = DialogStateParams.DIALOG_STATE_PRED_CONFIGS
 
+            self.debug_time = self.dialog_state_pred_configs['debug_time']
+
             ## Shared context
             self.socketio = socketio
             self.pipeline_pool = DialogStateParams.PIPELINE_POOL
@@ -139,7 +141,6 @@ class DialogStateParams:
             # Control flags
             self.stop_all_threads = False
             
-
             
         except Exception as e:
             print(f"Error initializing DialogStateParams: {e}")
@@ -478,11 +479,17 @@ class DialogStateParams:
                 # Process chunk to extract and gate features
                 gated_feature_data = self.feature_gater[identity].process_and_gate(annotated_audio)
                 
+
                 # If the feature gater returns data, put it in the processed queue for the LLM to process.
                 if gated_feature_data:
                     # Set the identity for this chunk
                     gated_feature_data['identity'] = identity
-                    
+
+
+                    # if self.debug_time:
+                    #     print(f"Sid: {self.sid} Approved audio feature, status: {gated_feature_data['status']}, identity: {identity}")
+
+
                     if 'time_stamp' in annotated_audio:
                         gated_feature_data['time_stamp'] = annotated_audio['time_stamp']
                     
@@ -494,6 +501,10 @@ class DialogStateParams:
                                 'status': 'ipu_sl' if i == 0 else 'ipu_cl',
                                 'time_stamp': gated_feature_data.get('time_stamp', time.time())##For these overbleed features from the last chunk, just set the time stamp to be the same as the current chunk
                             }
+
+                            # if self.debug_time:
+                            #     print(f"Sid: {self.sid} Adding feature chunk, status: {feature_item['status']}, identity: {identity}")
+
                             self.context_serializer.add_feature_chunk(feature_item)
                         
                         feature_item = {
@@ -502,8 +513,17 @@ class DialogStateParams:
                             'status': 'ipu_cl' if len(gated_feature_data['feature_last_chunk']) > 0 else 'ipu_sl',
                             'time_stamp': gated_feature_data.get('time_stamp', time.time())
                         }
+
+                        # if self.debug_time:
+                        #     print(f"Sid: {self.sid} Adding feature chunk, status: {feature_item['status']}, identity: {identity}")
+
                         self.context_serializer.add_feature_chunk(feature_item)
+
                     else:
+
+                        # if self.debug_time:
+                        #     print(f"Sid: {self.sid} Adding feature chunk, status: {feature_item['status']}, identity: {identity}")
+
                         self.context_serializer.add_feature_chunk(gated_feature_data)
 
             print(f"Sid: {self.sid} Stopping feature gating thread for '{identity}'.")
@@ -534,6 +554,9 @@ class DialogStateParams:
 
                 ## Send to the main processing queue for dialog state prediction
                 if feature_to_process is not None:
+                    # if self.debug_time:
+                    #     print(f"Sid: {self.sid} Comitting feature to processed_pcm_queue, status: {feature_to_process['status']}, identity: {feature_to_process.get('identity', 'N/A')}")
+
                     self.processed_pcm_queue.put(feature_to_process)
             
             print(f"Sid: {self.sid} Stopping context serializer thread.")
@@ -568,7 +591,14 @@ class DialogStateParams:
                 print(f"Sid: {self.sid} Processing approved audio for dialog state prediction, status: {feature_data['status']}, identity: {feature_data.get('identity', 'N/A')}")
                 
                 # Always run forward processing
+                if self.debug_time:
+                    start_time = time.time()
+                    
                 self.llm_prefill(feature_data)
+
+                if self.debug_time:
+                    elapsed_time = time.time() - start_time
+                    print(f"Sid: {self.sid} Dialog state prediction processing time: {elapsed_time:.4f} seconds")
 
         except Exception as e:
             print(f"Error initializing DialogStateParams: {e}")

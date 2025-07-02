@@ -418,7 +418,7 @@ class AudioLLM(torch.nn.Module):
                 "state_1": state_prob[1].item(), # Probability to start generating new responses
                 "state_2": state_prob[2].item()  # Probability that user finished
             }
-            print("State 1 prob: {:.4f}, State 2 prob: {:.4f}".format(prediction_probs["state_1"], prediction_probs["state_2"]))
+            # print("State 1 prob: {:.4f}, State 2 prob: {:.4f}".format(prediction_probs["state_1"], prediction_probs["state_2"]))
 
 
         # We only update context (past_key_values), no token generation. If it's not user input, we just return the past_key_values but do not return prediction_probs.

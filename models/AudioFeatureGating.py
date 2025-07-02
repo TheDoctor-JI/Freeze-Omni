@@ -99,11 +99,10 @@ class AudioFeatureGating:
         output_data = {
             'feature': current_feature.numpy().tolist(),
             'status': status,
-            'feature_last_chunk': None
+            'feature_last_chunk': []
         }
 
-        if status == 'ipu_sl':
-            ## TBD: won't this introduce a lot of overlap?
+        if status == 'ipu_sl' and self.onset_input_chunk_cache_size > 0:
             # For IPU start, retrieve the last 6 chunks from history
             output_data['feature_last_chunk'] = self.history[-self.onset_input_chunk_cache_size:].unsqueeze(1).numpy().tolist()
 
