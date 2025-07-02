@@ -19,7 +19,7 @@ vad:
 
 audio_feature_gating:
   feature_gating_history_size: 10 # From AudioFeatureGating.py, line 14
-  onset_input_chunk_cache_size: 6 # From AudioFeatureGating.py, line 15
+  onset_input_chunk_cache_size: 0 # From AudioFeatureGating.py, line 15
 
   fbank:
     expected_audio_chunk_duration_in_sec: 0.16 ## 160ms

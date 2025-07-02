@@ -440,6 +440,7 @@ class DialogStateParams:
                     self.emit_vad_event(status, identity=identity)
                     self.emit_state_update(vad_state=False,  identity=identity)
                 elif status == 'ipu_cl':
+                    self.emit_vad_event(status, identity=identity)
                     self.emit_state_update(vad_state=True,  identity=identity)
 
                 # Put annotated audio into the queue for the feature gating thread
