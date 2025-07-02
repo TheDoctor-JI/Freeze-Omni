@@ -68,6 +68,7 @@ class DialogStateParams:
     EXPECTED_SAMPLING_RATE = DIALOG_STATE_PRED_CONFIGS['audio']['expected_sampling_rate']
     EXPECTED_ENCODING = 's16le'
     RESPONSE_THRESHOLD = DIALOG_STATE_PRED_CONFIGS['dialog_state_decision']['resp_threshold']
+    SLEEP_INTERVAL = DIALOG_STATE_PRED_CONFIGS['thread_sleep_interval']
 
     def __init__(self, sid, socketio):
         try:
@@ -324,15 +325,15 @@ class DialogStateParams:
             
             while not self.stop_all_threads:
 
-                # print(f"Sid: {self.sid} Received raw audio chunk for '{identity}' with size: {len(audio_dat_dict['audio'])}")
-
                 ## Get the audio data from the input queue
-                time.sleep(0.005)
+                time.sleep(DialogStateParams.SLEEP_INTERVAL)
 
                 data_item = self.audio_data_input_queue.get()
 
                 if data_item is None:
                     continue
+
+                # print(f"Sid: {self.sid} Received raw audio chunk")
 
                 audio_dat_dict, identity = data_item
 
@@ -382,13 +383,11 @@ class DialogStateParams:
 
             while not self.stop_all_threads:
 
-                time.sleep(0.005)
+                time.sleep(DialogStateParams.SLEEP_INTERVAL)
 
-                new_audio_data_dict = self.raw_pcm_queue[identity].get(chunk_size)
+                new_audio_data_dict = self.raw_pcm_queue[identity].get()
                 if new_audio_data_dict is None:
                     continue
-
-                # print(f"Sid: {self.sid} Received raw audio chunk of size: {len(audio_data_dict['audio'])} for '{identity}'")
 
                 if(len(aggregated_audio_data_dict['audio']) < chunk_size):
                     
@@ -428,15 +427,25 @@ class DialogStateParams:
                         'time_stamp': None  # Use current time as timestamp
                     }
 
+                # if(self.debug_time):
+                #     print(f"Sid: {self.sid} VAD received raw audio chunk of size: {len(sufficient_audio_data_dict['audio'])} for '{identity}'")
                     
                 # Run VAD prediction to get annotated audio
                 annotated_audio = self.standalone_vad[identity].predict(sufficient_audio_data_dict)
-                
+
+                # if(self.debug_time):
+                #     print(f"Sid: {self.sid} VAD annotation done for {identity}.")
+                    
+
                 # Emit VAD events for monitoring GUI (only for user)
                 status = annotated_audio['status']
                 if status == 'ipu_sl':
                     self.emit_vad_event(status, identity=identity)
                     self.emit_state_update(vad_state=True, identity=identity)
+
+                    if(self.debug_time):##VAD annotation usually takes less than 10ms
+                        print(f"Sid: {self.sid} SL chunk obtained for {identity}.")
+
                 elif status == 'ipu_el':
                     self.emit_vad_event(status, identity=identity)
                     self.emit_state_update(vad_state=False,  identity=identity)
@@ -464,7 +473,7 @@ class DialogStateParams:
 
             while not self.stop_all_threads:
 
-                time.sleep(0.005)
+                time.sleep(DialogStateParams.SLEEP_INTERVAL)
                 
                 # Get annotated audio chunk for the specific identity
                 annotated_audio = self.annotated_audio_queue[identity].get()
@@ -494,6 +503,10 @@ class DialogStateParams:
                         gated_feature_data['time_stamp'] = annotated_audio['time_stamp']
                     
                     if gated_feature_data['status'] == 'ipu_sl':
+
+                        # if(self.debug_time):##fbank feature gating usually takes around 20ms
+                        #     print(f"Sid: {self.sid} SL chunk approved for {identity}.")
+
                         for i, feature in enumerate(gated_feature_data['feature_last_chunk']):
                             feature_item = {
                                 'identity': identity,
@@ -544,7 +557,7 @@ class DialogStateParams:
             print(f"Sid: {self.sid} Starting context serializer thread.")
             
             while not self.stop_all_threads:
-                time.sleep(0.005)
+                time.sleep(DialogStateParams.SLEEP_INTERVAL)
 
                 ## Get the next feature to process
                 feature_to_process = self.context_serializer.get_next_feature()
@@ -577,7 +590,7 @@ class DialogStateParams:
                 
             while True:
 
-                time.sleep(0.005)
+                time.sleep(DialogStateParams.SLEEP_INTERVAL)
                 
                 if self.stop_all_threads:
                     print(f"Sid: {self.sid} Stopping dialog state prediction thread")
@@ -591,12 +604,12 @@ class DialogStateParams:
                 # print(f"Sid: {self.sid} Processing approved audio for dialog state prediction, status: {feature_data['status']}, identity: {feature_data.get('identity', 'N/A')}")
                 
                 # Always run forward processing
-                if self.debug_time:
-                    print(f"Sid: {self.sid} Starting dialog state prediction for feature data with status: {feature_data['status']} and identity: {feature_data.get('identity', 'N/A')}")
+                if self.debug_time and feature_data['status'] == 'ipu_sl':
+                    print(f"Sid: {self.sid} Starting dialog state prediction for ipu_sl feature data.")
                     
                 self.llm_prefill(feature_data)
 
-                if self.debug_time:
+                if self.debug_time and feature_data['status'] == 'ipu_sl':##Dialog state prediction takes around 300ms
                     print(f"Sid: {self.sid} Dialog state prediction done.")
 
         except Exception as e:
