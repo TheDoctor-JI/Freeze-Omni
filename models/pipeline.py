@@ -23,6 +23,11 @@ class inferencePipeline():
         self.model = self.model.to(self.device)
         self.model.eval()
 
+        # After fully loading the model, we can compile the model for performance
+        self.model.init_template_compilation()
+
+        
+
     def speech_dialogue(self, 
                         audio: tuple, #Audio features
                         identity: str, #Audio source's identity

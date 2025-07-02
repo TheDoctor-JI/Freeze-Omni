@@ -210,7 +210,7 @@ class AudioLLM(torch.nn.Module):
 
 
         if self.predict_usr_state:
-            self.predictor_head = nn.Linear(llm_embed_dim, predict_usr_state).to(self.device) 
+            self.predictor_head = nn.Linear(llm_embed_dim, 4) 
         else:
             self.predictor_head = None
 
@@ -227,17 +227,17 @@ class AudioLLM(torch.nn.Module):
             "/hyps": 8,
         }
 
+
+        ## Warm up will be done in the main service code using data of the same dimensionality as actual data
+
+    def init_template_compilation(self):
+        """Pre-compute prompt embeddings"""
+
         ## Pre-compute chat template embeddings
         self.system_chat_prefix_embeds, self.system_chat_prefix_mask = self.initialize_chat_template_embeds('system')
         self.user_chat_prefix_embeds, self.user_chat_prefix_mask = self.initialize_chat_template_embeds('user')
         
-        ## Compile performance-critical methods
-        self.llm_decoder = self.llm_decoder.to(self.device)
-        self._compile_methods()
 
-        ## Warm up will be done in the main service code using data of the same dimensionality as actual data
-
-    def _compile_methods(self):
         """Compile performance-critical methods"""
 
         # # Compile the LLM decoder model
@@ -246,10 +246,6 @@ class AudioLLM(torch.nn.Module):
             mode="reduce-overhead"
         )
 
-        # self._prediction_head_forward = torch.compile(
-        #     self._prediction_head_forward,
-        #     mode="reduce-overhead"
-        # )
         
         # Compile encoders for inference
         try:
@@ -277,7 +273,6 @@ class AudioLLM(torch.nn.Module):
         except Exception as e:
             print(f"Warning: Could not compile adapters: {e}")
 
-
     def initialize_chat_template_embeds(self, identity):
 
         if self.chat_template is not None:
@@ -290,7 +285,8 @@ class AudioLLM(torch.nn.Module):
             else:
                 raise ValueError(f"Unknown identity: {identity}. Must be 'user' or 'system'.")
 
-            chat_prefix_embeds = self.llm_decoder.transformer.wte(chat_prefix_tokens).to(self.device)
+            chat_prefix_tokens = chat_prefix_tokens.to(self.device)  # Move to CUDA device
+            chat_prefix_embeds = self.llm_decoder.transformer.wte(chat_prefix_tokens)
             chat_prefix_mask = torch.full(chat_prefix_tokens.shape, 
                             True).to(self.device)
 
@@ -475,7 +471,8 @@ class AudioLLM(torch.nn.Module):
     
     def _prediction_head_forward(self, hidden_state: torch.Tensor) -> torch.Tensor:
         """Separate prediction head forward pass"""
-        state_logits = self.predictor_head(hidden_state)[0, :]
+        predictor_output = self.predictor_head(hidden_state)
+        state_logits = predictor_output[0, :]
         prob = torch.nn.functional.softmax(state_logits[:, :-1], dim=-1)
         state_prob = prob[-1].clone()
         
@@ -505,7 +502,7 @@ class AudioLLM(torch.nn.Module):
 
             # Use compiled prediction head
             state_prob = self._prediction_head_forward(last_hidden_state)
-                
+
             # Extract probabilities (this part stays uncompiled for flexibility)
             prediction_probs = {
                 "state_1": state_prob[1].item(),

@@ -736,7 +736,7 @@ class DialogStateParams:
             })
             time.sleep(1)  # Give some time for the feature gating thread to process these samples before pushing for the other identity
 
-        time.sleep(1)
+        time.sleep(5)
 
         ## Wait for the feature gating threads to finish processing
         while self.processed_pcm_queue.queue.qsize() > 0:
