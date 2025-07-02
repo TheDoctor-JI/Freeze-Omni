@@ -68,14 +68,11 @@ class inferencePipeline():
                     # feats = audio
                     # feats_lengths = torch.tensor([feats.size(1)]).to(self.device)
 
-                    with torch.autocast(device_type="cuda", 
-                            dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float32):
-                        
-                        prediction_probs, past_key_values, adapter_cache, encoder_cache, pe_index = self.model.recognize(
-                                    speech=feats,
-                                    # feats.to(self.device),
-                                    # feats_lengths,
-                                    extra_inputs=extra_inputs)
+                    prediction_probs, past_key_values, adapter_cache, encoder_cache, pe_index = self.model.recognize(
+                                speech=feats,
+                                # feats.to(self.device),
+                                # feats_lengths,
+                                extra_inputs=extra_inputs)
 
                     # Return the updated context and prediction results
                     return prediction_probs, past_key_values, adapter_cache, encoder_cache, pe_index
