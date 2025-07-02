@@ -39,7 +39,7 @@ def get_args():
     with open(inference_config_path, 'r') as f:
         config = yaml.safe_load(f)
 
-    print("Configuration loaded:", json.dumps(config, indent=2))
+    print("Freezeomni configuration loaded:", json.dumps(config, indent=2))
     return config
 
 
@@ -206,6 +206,7 @@ class DialogStateParams:
 
         except Exception as e:
             self.logger.error(f"Error resetting context: {e}")
+            self.release()
             raise
     
     def start_all_threads(self):
@@ -255,6 +256,7 @@ class DialogStateParams:
 
         except Exception as e:
             self.logger.error(f"Error starting threads: {e}")
+            self.release()
             raise
 
     def set_dialog_callback(self, callback):

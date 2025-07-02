@@ -14,7 +14,7 @@ class inferencePipeline():
         self.device = args.get('device', 'cuda:0')
         self.id = shortuuid.uuid()
 
-        self.logger = setup_logger(f'FOPipe_{self.id}')
+        self.logger = setup_logger(f'FOPipe_{self.id}', file_log_level="DEBUG", terminal_log_level="INFO")
 
         self.logger.info(f"Using device: {self.device} for inference pipeline of freeze-omni model.")
 
