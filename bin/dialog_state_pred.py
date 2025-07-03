@@ -70,10 +70,10 @@ class DialogStateParams:
     RESPONSE_THRESHOLD = DIALOG_STATE_PRED_CONFIGS['dialog_state_decision']['resp_threshold']
     SLEEP_INTERVAL = DIALOG_STATE_PRED_CONFIGS['thread_sleep_interval']
 
-    def __init__(self, sid, socketio, parent_logger):
+    def __init__(self, sid, socketio, parent_logger, event_outlet):
         try:
             self.sid = sid
-
+            self.event_outlet = event_outlet
             self.logger = parent_logger.getChild(f"DialogStateParams")
 
             ## Config for dialog state prediction
@@ -693,6 +693,10 @@ class DialogStateParams:
             state_data['generating'] = generating
         if state_data:
             self.socketio.emit('state_update', state_data, to=self.sid)
+
+        if dialog_state is not None:
+            ## Also send the dialog state to the event outlet for further processing
+            self.event_outlet(state_data)
 
     def emit_vad_event(self, event_type, identity = None):
         """Emit VAD events to the GUI"""
