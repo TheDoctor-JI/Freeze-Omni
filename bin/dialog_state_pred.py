@@ -701,12 +701,10 @@ class DialogStateParams:
     def emit_vad_event(self, event_type, identity = None):
         """Emit VAD events to the GUI"""
 
-
         self.socketio.emit('ipu_event', {'event_type': event_type, 'identity': identity}, to=self.sid)
 
         if identity == 'user' and event_type in ['ipu_sl', 'ipu_el']:
             self.event_outlet({'ipu_event': event_type})  # Emit to the event outlet for user VAD events
-
 
     def dialog_ss_callback(self):
         """
