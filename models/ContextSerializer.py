@@ -25,7 +25,7 @@ class ContextSerializer:
         self.feature_queue = []
 
 
-        print("ContextSerializer state has been reset.")
+        # self.loggger.debug("ContextSerializer state has been reset.")
     
     def add_feature_chunk(self, feature_chunk):
         """

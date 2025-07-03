@@ -49,7 +49,7 @@ class AudioFeatureGating:
         self.input_sample.zero_()
         self.input_chunk.zero_()
         self.history.zero_()
-        print("AudioFeatureGating state has been reset.")
+        # self.loggger.debug("AudioFeatureGating state has been reset.")
 
     def _extract_fbank(self, audio_chunk):
         """Extracts fbank features from a raw audio chunk, managing state."""

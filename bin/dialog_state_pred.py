@@ -376,7 +376,7 @@ class DialogStateParams:
         try:
             
             chunk_size = self.standalone_vad[identity].get_chunk_size()
-            self.logger.info(f"Sid: {self.sid} Starting standalone VAD thread for '{identity}' with chunk size: {chunk_size}")
+            self.logger.debug(f"Sid: {self.sid} Starting standalone VAD thread for '{identity}' with chunk size: {chunk_size}")
             
             
             aggregated_audio_data_dict = {
@@ -461,7 +461,7 @@ class DialogStateParams:
                 # Put annotated audio into the queue for the feature gating thread
                 self.annotated_audio_queue[identity].put(annotated_audio)
 
-            self.logger.info(f"Sid: {self.sid} Stopping standalone VAD thread for '{identity}'")
+            self.logger.debug(f"Sid: {self.sid} Stopping standalone VAD thread for '{identity}'")
         
         except Exception as e:
             self.logger.error(f"Error initializing DialogStateParams: {e}")
@@ -474,7 +474,7 @@ class DialogStateParams:
         and gates the features to the serializer
         """
         try:
-            self.logger.info(f"Sid: {self.sid} Starting feature gating thread for '{identity}'.")
+            self.logger.debug(f"Sid: {self.sid} Starting feature gating thread for '{identity}'.")
 
             while not self.stop_all_threads:
 
@@ -544,7 +544,7 @@ class DialogStateParams:
 
                         self.context_serializer.add_feature_chunk(gated_feature_data)
 
-            self.logger.info(f"Sid: {self.sid} Stopping feature gating thread for '{identity}'.")
+            self.logger.debug(f"Sid: {self.sid} Stopping feature gating thread for '{identity}'.")
 
         except Exception as e:
             self.logger.error(f"Error initializing DialogStateParams: {e}")
@@ -559,7 +559,7 @@ class DialogStateParams:
 
         try:
 
-            self.logger.info(f"Sid: {self.sid} Starting context serializer thread.")
+            self.logger.debug(f"Sid: {self.sid} Starting context serializer thread.")
             
             while not self.stop_all_threads:
                 time.sleep(DialogStateParams.SLEEP_INTERVAL)
@@ -577,7 +577,7 @@ class DialogStateParams:
 
                     self.processed_pcm_queue.put(feature_to_process)
             
-            self.logger.info(f"Sid: {self.sid} Stopping context serializer thread.")
+            self.logger.debug(f"Sid: {self.sid} Stopping context serializer thread.")
 
         except Exception as e:
             self.logger.error(f"Error initializing DialogStateParams: {e}")
@@ -591,14 +591,14 @@ class DialogStateParams:
         """
         try:
 
-            self.logger.info(f"Sid: {self.sid} Starting dialog state prediction thread")
+            self.logger.debug(f"Sid: {self.sid} Starting dialog state prediction thread")
                 
             while True:
 
                 time.sleep(DialogStateParams.SLEEP_INTERVAL)
                 
                 if self.stop_all_threads:
-                    self.logger.info(f"Sid: {self.sid} Stopping dialog state prediction thread")
+                    self.logger.debug(f"Sid: {self.sid} Stopping dialog state prediction thread")
                     break
                         
                 # Get processed audio from the gated queue
@@ -700,7 +700,13 @@ class DialogStateParams:
 
     def emit_vad_event(self, event_type, identity = None):
         """Emit VAD events to the GUI"""
+
+
         self.socketio.emit('ipu_event', {'event_type': event_type, 'identity': identity}, to=self.sid)
+
+        if identity == 'user' and event_type in ['ipu_sl', 'ipu_el']:
+            self.event_outlet({'ipu_event': event_type})  # Emit to the event outlet for user VAD events
+
 
     def dialog_ss_callback(self):
         """
@@ -754,4 +760,4 @@ class DialogStateParams:
         ## Wait a bit longer to make sure the processing of the last chunk is done
         time.sleep(2)
 
-        self.logger.info(f"DialogParams: Warmed up compiled methods for user {self.sid}.")
+        self.logger.debug(f"DialogParams: Warmed up compiled methods for user {self.sid}.")
