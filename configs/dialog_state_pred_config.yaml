@@ -32,9 +32,9 @@ inference_control:
   top_k: 5 # From server_alt.py, line 35 (argparse default)
   top_p: 0.8 # From server_alt.py, line 36 (argparse default)
   temperature: 0.7 # From server_alt.py, line 37 (argparse default)
-  default_prompt: "You are a helpful voice assistant. Your answer should be coherent, natural, simple, complete. Your name is Xiao Yun. Your inventor is Tencent." # From server_alt.py, line 90
-  
+  # default_prompt: "You are a helpful voice assistant. Your answer should be coherent, natural, simple, complete. Your name is Xiao Yun. Your inventor is Tencent." # From server_alt.py, line 90
+  default_prompt: "" # From server_alt.py, line 90
 
 
 dialog_state_decision:
-  resp_threshold: 0.5 
+  resp_threshold: 0.3
