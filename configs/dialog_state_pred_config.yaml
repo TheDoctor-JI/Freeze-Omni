@@ -37,4 +37,4 @@ inference_control:
 
 
 dialog_state_decision:
-  resp_threshold: 0.3
+  resp_threshold: 0.5
