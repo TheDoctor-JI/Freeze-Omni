@@ -754,13 +754,13 @@ class DialogStateParams:
             })
             time.sleep(1)  # Give some time for the feature gating thread to process these samples before pushing for the other identity
 
-        time.sleep(5)
+        time.sleep(15)
 
         ## Wait for the feature gating threads to finish processing
         while self.processed_pcm_queue.queue.qsize() > 0:
             time.sleep(0.1)
 
         ## Wait a bit longer to make sure the processing of the last chunk is done
-        time.sleep(2)
+        time.sleep(5)
 
         self.logger.debug(f"DialogParams: Warmed up compiled methods for user {self.sid}.")
