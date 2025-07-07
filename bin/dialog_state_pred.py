@@ -30,6 +30,7 @@ from models.ContextSerializer import ContextSerializer
 from flask import Blueprint, request
 from flask_socketio import disconnect
 from logger.logger import setup_logger
+from FloorState.FloorStateEvent import FloorStateDef, FloorEvent, FloorEventType
 
 
 def get_args():
@@ -52,6 +53,52 @@ def custom_print(*args, **kwargs):
 # change print function to add time stamp
 original_print = builtins.print
 builtins.print = custom_print
+
+
+class AnnotatedHumanIPU:
+
+    def __init__(self, sid, idx):
+        self.id = f"{sid}_{idx}"
+        self.start_time = None
+        self.end_time = None
+        self.response_required = False
+
+    def register_start_time(self, start_time):
+        """
+        Register the start time of the human IPU.
+        """
+        self.start_time = start_time
+
+    def register_end_time(self, end_time):
+        """
+        Register the end time of the human IPU.
+        """
+        self.end_time = end_time
+
+    def register_response_state(self, new_state_string: str):
+        """
+        Register whether a response is required for this human IPU.
+        """
+
+        if new_state_string == 'dialog_ss':
+
+            self.response_required = True
+
+    def to_dict(self):
+        """
+        Convert the human IPU to a dictionary representation.
+        """
+        return {
+            'id': self.id,
+            'start_time': self.start_time,
+            'end_time': self.end_time,
+            'response_required': self.response_required
+        }
+
+    def to_event(self):
+
+        return FloorEvent( event_data = self.to_dict(), event_type = FloorEventType.IPU_RESPONSE_REQUIREMENT_REPORT)
+
 
 
 '''
@@ -208,6 +255,10 @@ class DialogStateParams:
                     'pe_index': 0,
                 }
             }
+
+            ## Reset the cache of human IPU
+            self.current_human_ipu = None
+            self.total_human_ipu_cnt = 0
 
         except Exception as e:
             self.logger.error(f"Error resetting context: {e}")
@@ -613,14 +664,57 @@ class DialogStateParams:
                     
                 # self.logger.debug(f"Sid: {self.sid} Processing approved audio for dialog state prediction, status: {feature_data['status']}, identity: {feature_data.get('identity', 'N/A')}")
                 
+
                 # Always run forward processing
                 if self.debug_time and feature_data['status'] == 'ipu_sl':
+                    
                     self.logger.debug(f"Sid: {self.sid} Starting dialog state prediction for ipu_sl feature data.")
                     
-                self.llm_prefill(feature_data)
 
-                if self.debug_time and feature_data['status'] == 'ipu_sl':##Dialog state prediction takes around 300ms
+                predicted_state = self.llm_prefill(feature_data)
+
+                if self.debug_time and feature_data['status'] == 'ipu_sl':
                     self.logger.debug(f"Sid: {self.sid} Dialog state prediction done.")
+
+
+                ## Update human IPU book keeping
+                if feature_data['identity'] == 'user':
+
+                    if feature_data['status'] == 'ipu_sl':
+
+                        if self.current_human_ipu is None:
+
+                            self.total_human_ipu_cnt += 1
+
+                            self.current_human_ipu = AnnotatedHumanIPU(self.sid, self.total_human_ipu_cnt)
+
+                            self.current_human_ipu.register_start_time(feature_data['time_stamp'])
+
+                            self.logger.debug(f"Sid: {self.sid} New human IPU, ID: {self.current_human_ipu.id}, start time: {feature_data['time_stamp']}")
+
+                        else:
+                            raise Exception(f"Sid: {self.sid} Unexpected ipu_sl feature data while current_human_ipu is not None. Current human IPU ID: {self.current_human_ipu.id}")
+
+                    elif feature_data['status'] == 'ipu_el':
+
+                        if self.current_human_ipu is None:
+
+                            self.current_human_ipu.register_end_time(feature_data['time_stamp'])
+
+                            self.logger.debug(f"Sid: {self.sid} Human IPU ended, ID: {self.current_human_ipu.id}, end time: {feature_data['time_stamp']}")
+
+                        else:
+
+                            raise Exception(f"Sid: {self.sid} Unexpected ipu_el feature data while current_human_ipu is None. Current human IPU ID: {self.current_human_ipu.id}")
+
+                    self.current_human_ipu.register_response_state(predicted_state)
+
+                    if self.current_human_ipu.end_time is not None:
+
+                        self.event_outlet(self.current_human_ipu.to_event())  ##  Emit this human user IPU annotated with dialog state evaluations for subsequent processing
+
+                        self.current_human_ipu = None  # Reset current human IPU after processing
+
 
         except Exception as e:
             self.logger.error(f"Error initializing DialogStateParams: {e}")
@@ -672,7 +766,10 @@ class DialogStateParams:
 
             # Check if the system should start generating a new response
             if prediction_probs["state_1"] > DialogStateParams.RESPONSE_THRESHOLD:
-                self.emit_state_update(dialog_state='dialog_ss')
+
+                predicted_state = 'dialog_ss'  # System should generate a response
+
+                self.emit_state_update(dialog_state=predicted_state)
                 # self.logger.debug(f"Sid: {self.sid} Dialog state: start preparing response")
                 
                 # Trigger external callback
@@ -683,10 +780,19 @@ class DialogStateParams:
             #     # self.logger.debug(f"Sid: {self.sid} Dialog state: continue listening")
 
             else:
-                ## No point differentiating cl and el state for now.
-                self.emit_state_update(dialog_state='dialog_cl')
 
-    def emit_state_update(self, vad_state=None, dialog_state=None, generating=None, identity = None):
+                predicted_state = 'dialog_cl'  # System should continue listening
+
+                ## No point differentiating cl and el state for now.
+                self.emit_state_update(dialog_state=predicted_state)
+
+        else:
+
+            predicted_state = None  # No dialog state prediction for system input
+
+        return predicted_state
+
+    def emit_state_update(self, vad_state=None, dialog_state=None, identity = None):
         """Emit state updates to the GUI"""
         state_data = {}
         if vad_state is not None:
@@ -694,22 +800,31 @@ class DialogStateParams:
             state_data['identity'] = identity 
         if dialog_state is not None:
             state_data['dialog_state'] = dialog_state
-        if generating is not None:
-            state_data['generating'] = generating
         if state_data:
             self.socketio.emit('state_update', state_data, to=self.sid)
 
-        if dialog_state is not None:
             ## Also send the dialog state to the event outlet for further processing
-            self.event_outlet(state_data)
+            self.event_outlet(
+                FloorEvent(
+                    event_type=FloorEventType.DIALOG_STATE_REPORT,
+                    event_data={
+                        'dialog_state': dialog_state,
+                    }
+                )
+            )
 
     def emit_vad_event(self, event_type, identity = None):
         """Emit VAD events to the GUI"""
 
         self.socketio.emit('ipu_event', {'event_type': event_type, 'identity': identity}, to=self.sid)
 
-        if identity == 'user' and event_type in ['ipu_sl', 'ipu_el']:
-            self.event_outlet({'ipu_event': event_type})  # Emit to the event outlet for user VAD events
+        if identity == 'user':
+            self.event_outlet(
+                FloorEvent(
+                    event_type=FloorEventType.IPU_ON_OFFSET_REPORT,
+                    event_data={'ipu_event': event_type}
+                )
+            )  # Emit to the event outlet for user VAD events
 
     def dialog_ss_callback(self):
         """
