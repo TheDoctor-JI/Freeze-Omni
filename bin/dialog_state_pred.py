@@ -29,6 +29,7 @@ from models.AudioFeatureGating import AudioFeatureGating
 from models.ContextSerializer import ContextSerializer
 from flask import Blueprint, request
 from flask_socketio import disconnect
+from logger.logger import setup_logger
 
 
 def get_args():
@@ -70,11 +71,14 @@ class DialogStateParams:
     RESPONSE_THRESHOLD = DIALOG_STATE_PRED_CONFIGS['dialog_state_decision']['resp_threshold']
     SLEEP_INTERVAL = DIALOG_STATE_PRED_CONFIGS['thread_sleep_interval']
 
-    def __init__(self, sid, socketio, parent_logger, event_outlet):
+    def __init__(self, sid, socketio, event_outlet, parent_logger=None):
         try:
             self.sid = sid
             self.event_outlet = event_outlet
-            self.logger = parent_logger.getChild(f"DialogStateParams")
+            if parent_logger is not None:
+                self.logger = parent_logger.getChild(f"DialogStateParams")
+            else:
+                self.logger = setup_logger(f"DialogStateParams_{self.sid}", file_log_level="DEBUG", terminal_log_level="INFO")
 
             ## Config for dialog state prediction
             self.dialog_state_pred_configs = DialogStateParams.DIALOG_STATE_PRED_CONFIGS
@@ -89,6 +93,7 @@ class DialogStateParams:
                 raise Exception("Failed to get pipeline object from pool")
             else:
                 self.logger.debug(f"Acquired pipeline object {self.pipeline_obj.id} for dialog state prediction.")
+                self.pipeline_obj.pipeline_proc.setup_logger(self.logger)
 
             ## Internal parameters for this class
 

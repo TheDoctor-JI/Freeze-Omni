@@ -14,9 +14,9 @@ class inferencePipeline():
         self.device = args.get('device', 'cuda:0')
         self.id = shortuuid.uuid()
 
-        self.logger = setup_logger(f'FOPipe_{self.id}', file_log_level="DEBUG", terminal_log_level="INFO")
+        # self.logger = setup_logger(f'FOPipe_{self.id}', file_log_level="DEBUG", terminal_log_level="INFO")
 
-        self.logger.info(f"Using device: {self.device} for inference pipeline of freeze-omni model.")
+        print(f"Using device: {self.device} for inference pipeline of freeze-omni model.")
 
         with open(self.args['model_path'] + "/audiollm/train.yaml", 'r') as fin:
             configs = yaml.safe_load(fin)
@@ -24,7 +24,7 @@ class inferencePipeline():
             configs['model_conf']['llm_path'] = self.args['llm_path']
 
         # Init asr model from configs
-        self.model = init_encoder_llm(device = self.device, configs = configs, logger=self.logger)
+        self.model = init_encoder_llm(device = self.device, configs = configs)
         
         load_checkpoint(self.model, self.args['model_path'] + "/audiollm/final.pt")
         self.model = self.model.to(self.device)
@@ -32,8 +32,6 @@ class inferencePipeline():
 
         # After fully loading the model, we can compile the model for performance
         self.model.init_template_compilation()
-
-        
 
     def speech_dialogue(self, 
                         audio: tuple, #Audio features
@@ -130,3 +128,20 @@ class inferencePipeline():
                 text += "。"
         
         return text
+
+    def setup_logger(self, parent_logger):
+        """
+        Sets up a logger for the inference pipeline.
+
+        Parameters:
+        - parent_logger (Logger): The parent logger to create a child logger from.
+
+        Returns:
+        - None
+        """
+        if parent_logger is not None:
+            self.logger = parent_logger.getChild(f"FOPipe")
+        else:
+            self.logger = setup_logger(f"FOPipe_{self.id}", file_log_level="DEBUG", terminal_log_level="INFO")
+
+        self.model.setup_logger(self.logger)

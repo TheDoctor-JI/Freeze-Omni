@@ -14,6 +14,7 @@ from transformers import AutoModelForCausalLM
 from transformers import AutoTokenizer
 
 from models.adapter import *
+import shortuuid
 
 IGNORE_ID = -1
 
@@ -24,7 +25,6 @@ IGNORE_ID = -1
 class AudioLLM(torch.nn.Module):
     def __init__(
         self,
-        logger,
         encoder: torch.nn.Module,
         llm_path: str,
         device: str = "cuda:0",  # Add device parameter
@@ -61,9 +61,8 @@ class AudioLLM(torch.nn.Module):
         chunk_size: int = -1,
     ):
         super().__init__()
+        self.id = shortuuid.uuid()
         self.device = torch.device(device)
-
-        self.logger = logger
 
         self.encoder_user = encoder
         self.encoder_system = copy.deepcopy(encoder)
@@ -233,6 +232,16 @@ class AudioLLM(torch.nn.Module):
 
         ## Warm up will be done in the main service code using data of the same dimensionality as actual data
 
+    def setup_logger(self, parent_logger=None):
+        """
+        Set up the logger for this class.
+        If a parent logger is provided, it will create a child logger.
+        Otherwise, it will create a new logger.
+        """
+        if parent_logger is not None:
+            self.logger = parent_logger.getChild(f"AudioLLM_{self.id}")
+
+
     def init_template_compilation(self):
         """Pre-compute prompt embeddings"""
 
@@ -250,7 +259,7 @@ class AudioLLM(torch.nn.Module):
                 mode="reduce-overhead"
             )
         except Exception as e:
-            self.logger.warning(f"Warning: Could not compile LLM decoder: {e}")
+            print(f"Warning: Could not compile LLM decoder: {e}")
         
         # Compile encoders for inference
         try:
@@ -263,7 +272,7 @@ class AudioLLM(torch.nn.Module):
                 mode="reduce-overhead"
             )
         except Exception as e:
-            self.logger.warning(f"Warning: Could not compile encoders: {e}")
+            print(f"Warning: Could not compile encoders: {e}")
         
         # Compile adapters
         try:
@@ -276,7 +285,7 @@ class AudioLLM(torch.nn.Module):
                 mode="reduce-overhead"
             )
         except Exception as e:
-            self.logger.warning(f"Warning: Could not compile adapters: {e}")
+            print(f"Warning: Could not compile adapters: {e}")
 
     def initialize_chat_template_embeds(self, identity):
 
