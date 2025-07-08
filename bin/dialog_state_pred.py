@@ -32,7 +32,7 @@ from flask_socketio import disconnect
 from logger.logger import setup_logger
 from FloorState.FloorStateEvent import FloorStateDef, FloorEvent, FloorEventType
 from FloorState.floor_state_emission import *
-
+import shortuuid
 
 def get_args():
 
@@ -58,8 +58,8 @@ builtins.print = custom_print
 
 class AnnotatedHumanIPU:
 
-    def __init__(self, sid, idx):
-        self.id = f"{sid}_{idx}"
+    def __init__(self, sid, ipu_id):
+        self.id = f"{sid}_{ipu_id}"
         self.start_time = None
         self.end_time = None
         self.response_required = False
@@ -119,10 +119,11 @@ class DialogStateParams:
     RESPONSE_THRESHOLD = DIALOG_STATE_PRED_CONFIGS['dialog_state_decision']['resp_threshold']
     SLEEP_INTERVAL = DIALOG_STATE_PRED_CONFIGS['thread_sleep_interval']
 
-    def __init__(self, sid, socketio, event_outlet, parent_logger=None):
+    def __init__(self, sid, socketio, event_outlet, ipu_audio_outlet, parent_logger=None):
         try:
             self.sid = sid
             self.event_outlet = event_outlet
+            self.ipu_audio_outlet = ipu_audio_outlet
             if parent_logger is not None:
                 self.logger = parent_logger.getChild(f"DialogStateParams")
             else:
@@ -259,7 +260,6 @@ class DialogStateParams:
 
             ## Reset the cache of human IPU
             self.current_human_ipu = None
-            self.total_human_ipu_cnt = 0
 
         except Exception as e:
             self.logger.error(f"Error resetting context: {e}")
@@ -435,7 +435,7 @@ class DialogStateParams:
         """
 
         try:
-            
+            total_ipus = 0
             chunk_size = self.standalone_vad[identity].get_chunk_size()
             self.logger.debug(f"Sid: {self.sid} Starting standalone VAD thread for '{identity}' with chunk size: {chunk_size}")
             
@@ -447,6 +447,8 @@ class DialogStateParams:
                 'time_stamp': None  # Use current time as timestamp
             }
 
+            current_ipu_id = None
+
             while not self.stop_all_threads:
 
                 time.sleep(DialogStateParams.SLEEP_INTERVAL)
@@ -455,6 +457,7 @@ class DialogStateParams:
                 if new_audio_data_dict is None:
                     continue
 
+                ## Gather sufficient data before running the VAD
                 if(len(aggregated_audio_data_dict['audio']) < chunk_size):
                     
                     ## Get more samples
@@ -496,7 +499,8 @@ class DialogStateParams:
                 # if(self.debug_time):
                 #     self.logger.debug(f"Sid: {self.sid} VAD received raw audio chunk of size: {len(sufficient_audio_data_dict['audio'])} for '{identity}'")
                     
-                # Run VAD prediction to get annotated audio
+                ## Run VAD prediction to get annotated audio
+                ## Return: {'audio': audio_chunk, 'status': 'ipu_sl', 'cached_audio': [chunk1, chunk2...], 'time_stamp': a timestamp}
                 annotated_audio = self.standalone_vad[identity].predict(sufficient_audio_data_dict)
 
                 # if(self.debug_time):
@@ -506,14 +510,38 @@ class DialogStateParams:
                 # Emit VAD events for monitoring GUI (only for user)
                 status = annotated_audio['status']
                 if status == 'ipu_sl':
+
+                    ## Obtain a new ID for the new IPU
+                    if current_ipu_id is not None:
+                        raise ValueError(f"Current IPU ID is already set to {current_ipu_id}, but a new IPU start is detected for {identity}.")
+                    total_ipus += 1
+                    current_ipu_id = f'{identity}_ipu_{total_ipus}'
+                    annotated_audio['ipu_id'] = current_ipu_id
+
                     vad_state = True
                     if(self.debug_time):##VAD annotation usually takes less than 10ms
                         self.logger.debug(f"Sid: {self.sid} SL chunk obtained for {identity}.")
+
                 elif status == 'ipu_el':
+
+                    ## Use existing IPU ID for the end of the IPU
+                    annotated_audio['ipu_id'] = current_ipu_id
+                
                     vad_state = False
+
+                    ## Since this is the end of an IPU, reset the id
+                    current_ipu_id = None
+
                 elif status == 'ipu_cl':
+
+                    ## Use existing IPU ID for the continuation of an IPU
+                    annotated_audio['ipu_id'] = current_ipu_id
+
                     vad_state = True
+
                 else:
+                    annotated_audio['ipu_id'] = -1 ## This implies that the audio data do not belong to any IPU
+
                     vad_state = None
 
                 if vad_state is not None:
@@ -521,13 +549,21 @@ class DialogStateParams:
                     emit_vad_state_update(socketio = self.socketio, sid=self.sid, vad_state=vad_state,  identity=identity)
                     emit_vad_event(socketio = self.socketio, sid=self.sid, event_type = status, identity=identity)
 
-                    if identity == 'user':##User vad events are also sent as a floor event for subsequent processing
+                    if identity == 'user':
+                        ##User vad events are also sent as a floor event for subsequent processing
                         self.event_outlet(
                             FloorEvent(
                                 event_type=FloorEventType.IPU_ON_OFFSET_REPORT,
                                 event_data={'ipu_event': status}
                             )
                         ) 
+
+                        ##Put this IPU-related audio into the audio queue for the AudioLLMParams
+                        if annotated_audio['ipu_id'] != -1:
+                            self.ipu_audio_outlet(
+                                identity = identity,
+                                audio_data_dict = annotated_audio##Note that the audio field is an np array containing float 32 audio samples.
+                            )
 
 
                     # Put annotated audio into the queue for the feature gating thread
@@ -570,7 +606,7 @@ class DialogStateParams:
                 if gated_feature_data:
                     # Set the identity for this chunk
                     gated_feature_data['identity'] = identity
-
+                    gated_feature_data['ipu_id'] = annotated_audio['ipu_id']  # Use the IPU ID from the annotated audio 
 
                     # if self.debug_time:
                     #     self.logger.debug(f"Sid: {self.sid} Approved audio feature, status: {gated_feature_data['status']}, identity: {identity}")
@@ -589,7 +625,8 @@ class DialogStateParams:
                                 'identity': identity,
                                 'feature': feature,
                                 'status': 'ipu_sl' if i == 0 else 'ipu_cl',
-                                'time_stamp': gated_feature_data.get('time_stamp', time.time())##For these overbleed features from the last chunk, just set the time stamp to be the same as the current chunk
+                                'time_stamp': gated_feature_data['time_stamp'],##For these overbleed features from the last chunk, just set the time stamp to be the same as the current chunk
+                                'ipu_id': gated_feature_data['ipu_id']  ## Keep these features associated with the same IPU ID
                             }
 
                             # if self.debug_time:
@@ -597,11 +634,13 @@ class DialogStateParams:
 
                             self.context_serializer.add_feature_chunk(feature_item)
                         
+                        ## Copy over the returned gated_feature_data, but change the status if necessary
                         feature_item = {
                             'identity': identity,
                             'feature': gated_feature_data['feature'],
                             'status': 'ipu_cl' if len(gated_feature_data['feature_last_chunk']) > 0 else 'ipu_sl',
-                            'time_stamp': gated_feature_data.get('time_stamp', time.time())
+                            'time_stamp': gated_feature_data['time_stamp'],
+                            'ipu_id': gated_feature_data['ipu_id']
                         }
 
                         # if self.debug_time:
@@ -684,7 +723,7 @@ class DialogStateParams:
                 # Always run forward processing
                 if self.debug_time and feature_data['status'] == 'ipu_sl':
                     
-                    self.logger.debug(f"Sid: {self.sid} Starting dialog state prediction for ipu_sl feature data.")
+                    self.logger.debug(f"Sid: {self.sid} Starting dialog state prediction for ipu_sl feature data of ipu {feature_data['ipu_id']}")
                     
 
                 predicted_state = self.llm_prefill(feature_data)
@@ -700,9 +739,7 @@ class DialogStateParams:
 
                         if self.current_human_ipu is None:
 
-                            self.total_human_ipu_cnt += 1
-
-                            self.current_human_ipu = AnnotatedHumanIPU(self.sid, self.total_human_ipu_cnt)
+                            self.current_human_ipu = AnnotatedHumanIPU(self.sid, feature_data['ipu_id'])
 
                             self.current_human_ipu.register_start_time(feature_data['time_stamp'])
 
@@ -827,7 +864,8 @@ class DialogStateParams:
                 'sr': DialogStateParams.EXPECTED_SAMPLING_RATE,
                 'enc': DialogStateParams.EXPECTED_ENCODING,
                 'status': 'ipu_sl',
-                'time_stamp': time.time()
+                'time_stamp': time.time(),
+                'ipu_id': 'warmup_ipu'
             })
             for i in range(num_of_cl_chunks):
                 self.annotated_audio_queue[identity].put({
@@ -835,14 +873,16 @@ class DialogStateParams:
                     'sr': DialogStateParams.EXPECTED_SAMPLING_RATE,
                     'enc': DialogStateParams.EXPECTED_ENCODING,
                     'status': 'ipu_cl',
-                    'time_stamp': time.time()
+                    'time_stamp': time.time(),
+                    'ipu_id': 'warmup_ipu'
                 })
             self.annotated_audio_queue[identity].put({
                 'audio': np.zeros(chunk_size, dtype=np.float32),
                 'sr': DialogStateParams.EXPECTED_SAMPLING_RATE,
                 'enc': DialogStateParams.EXPECTED_ENCODING,
                 'status': 'ipu_el',
-                'time_stamp': time.time()
+                'time_stamp': time.time(),
+                'ipu_id': 'warmup_ipu'
             })
             time.sleep(1)  # Give some time for the feature gating thread to process these samples before pushing for the other identity
 

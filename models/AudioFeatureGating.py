@@ -79,7 +79,7 @@ class AudioFeatureGating:
         Processes an annotated audio chunk to extract features and decides whether to forward it.
         
         Parameters:
-        - annotated_audio (dict): A dict like {'audio': np.array, 'status': 'ipu_cl', 'cached_audio': [..]}
+        - annotated_audio (dict): A dict like {'audio': np.array, 'status': 'ipu_cl', 'cached_audio': [..], 'ipu_id': id of the IPU this audio chunk belongs to}
 
         Returns:
         - dict or None: A dict with features if it should be processed, otherwise None.

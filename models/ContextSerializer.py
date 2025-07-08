@@ -32,16 +32,17 @@ class ContextSerializer:
         Add a feature chunk to the priority queue.
         
         Parameters:
-        - feature_chunk: a dictionary containing: {'identity', 'feature', 'status', 'time_stamp'}
+        - feature_chunk: a dictionary containing: {'identity', 'feature', 'status', 'time_stamp', 'ipu_id'}
         """
         timestamp = feature_chunk.get('time_stamp', None)
         identity = feature_chunk.get('identity', None)
         status = feature_chunk.get('status', None)
         feature = feature_chunk.get('feature', None)
+        ipu_id = feature_chunk.get('ipu_id', None)
 
         
         # Add to priority queue (heapq uses min-heap, so earliest timestamp first)
-        heapq.heappush(self.feature_queue, (timestamp, identity, status, feature))
+        heapq.heappush(self.feature_queue, (timestamp, identity, status, feature, ipu_id))
     
     def gate_feature(self, identity, status):
         """
@@ -104,7 +105,7 @@ class ContextSerializer:
             return feature_to_send
 
         ## Pop the earliest feature from the priority queue
-        timestamp, identity, status, feature_data = heapq.heappop(self.feature_queue)
+        timestamp, identity, status, feature_data, ipu_id = heapq.heappop(self.feature_queue)
         
         to_send, force_ipu_sl = self.gate_feature(identity, status)
 
@@ -114,6 +115,7 @@ class ContextSerializer:
                 'identity': identity,
                 'status': status if not force_ipu_sl else 'ipu_sl',  # Force status to ipu_sl if necessary
                 'feature': feature_data,
+                'ipu_id': ipu_id  # Include the IPU ID for tracking
             }
      
         return feature_to_send
