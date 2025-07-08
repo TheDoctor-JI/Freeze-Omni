@@ -322,7 +322,11 @@ class DialogStateParams:
     
     def set_prompt(self, prompt):
         """Set system prompt and reset context"""
-        self.system_role = self.pipeline_obj.pipeline_proc.speech_dialogue(None, stat='pre', role=prompt)
+        self.system_role = self.pipeline_obj.pipeline_proc.speech_dialogue(
+                                                            audio = None, 
+                                                            status='pre', 
+                                                            identity = None,
+                                                            role=prompt)
 
     def release(self):
         """Release resources"""
