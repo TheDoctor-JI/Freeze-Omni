@@ -19,7 +19,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from copy import deepcopy
 from threading import Timer
 from flask import Flask, render_template, request
-from flask_socketio import SocketIO, disconnect, emit
+from flask_socketio import SocketIO, disconnect
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -31,6 +31,7 @@ from flask import Blueprint, request
 from flask_socketio import disconnect
 from logger.logger import setup_logger
 from FloorState.FloorStateEvent import FloorStateDef, FloorEvent, FloorEventType
+from FloorState.floor_state_emission import *
 
 
 def get_args():
@@ -501,18 +502,28 @@ class DialogStateParams:
                 # Emit VAD events for monitoring GUI (only for user)
                 status = annotated_audio['status']
                 if status == 'ipu_sl':
-                    self.emit_vad_event(status, identity=identity)
-                    self.emit_state_update(vad_state=True, identity=identity)
-
+                    vad_state = True
                     if(self.debug_time):##VAD annotation usually takes less than 10ms
                         self.logger.debug(f"Sid: {self.sid} SL chunk obtained for {identity}.")
-
                 elif status == 'ipu_el':
-                    self.emit_vad_event(status, identity=identity)
-                    self.emit_state_update(vad_state=False,  identity=identity)
+                    vad_state = False
                 elif status == 'ipu_cl':
-                    self.emit_vad_event(status, identity=identity)
-                    self.emit_state_update(vad_state=True,  identity=identity)
+                    vad_state = True
+                else:
+                    raise ValueError(f"Unexpected VAD status: {status}")
+
+                ## Emit VAD state and event to the GUI for visualization
+                emit_vad_state_update(socketio = self.socketio, sid=self.sid, vad_state=vad_state,  identity=identity)
+                emit_vad_event(socketio = self.socketio, sid=self.sid, event_type = status, identity=identity)
+
+                if identity == 'user':##User vad events are also sent as a floor event for subsequent processing
+                    self.event_outlet(
+                        FloorEvent(
+                            event_type=FloorEventType.IPU_ON_OFFSET_REPORT,
+                            event_data={'ipu_event': event_type}
+                        )
+                    ) 
+
 
                 # Put annotated audio into the queue for the feature gating thread
                 self.annotated_audio_queue[identity].put(annotated_audio)
@@ -769,22 +780,29 @@ class DialogStateParams:
 
                 predicted_state = 'dialog_ss'  # System should generate a response
 
-                self.emit_state_update(dialog_state=predicted_state)
-                # self.logger.debug(f"Sid: {self.sid} Dialog state: start preparing response")
-                
                 # Trigger external callback
-                self.dialog_ss_callback()
+                emit_dialog_ss_callback(socketio=self.socketio, sid=self.sid)
 
-            # elif prediction_probs["state_2"] > threshold:
-            #     self.emit_state_update(dialog_state='dialog_el')
-            #     # self.logger.debug(f"Sid: {self.sid} Dialog state: continue listening")
-
-            else:
+            else:## No point differentiating dialog_cl and dialog_el state for now.
 
                 predicted_state = 'dialog_cl'  # System should continue listening
 
-                ## No point differentiating cl and el state for now.
-                self.emit_state_update(dialog_state=predicted_state)
+            ## Emit the state prediction to the GUI for visualization
+            emit_dialog_state_update(
+                socketio=self.socketio,
+                sid=self.sid,
+                dialog_state=predicted_state
+            )
+            ## Also send the dialog state update event to the event outlet for further processing
+            self.event_outlet(
+                FloorEvent(
+                    event_type=FloorEventType.DIALOG_STATE_REPORT,
+                    event_data={
+                        'dialog_state': predicted_state,
+                    }
+                )
+            )
+
 
         else:
 
@@ -792,52 +810,6 @@ class DialogStateParams:
 
         return predicted_state
 
-    def emit_state_update(self, vad_state=None, dialog_state=None, identity = None):
-        """Emit state updates to the GUI"""
-        state_data = {}
-        if vad_state is not None:
-            state_data['vad_state'] = vad_state
-            state_data['identity'] = identity 
-        if dialog_state is not None:
-            state_data['dialog_state'] = dialog_state
-        if state_data:
-            self.socketio.emit('state_update', state_data, to=self.sid)
-
-            ## Also send the dialog state to the event outlet for further processing
-            self.event_outlet(
-                FloorEvent(
-                    event_type=FloorEventType.DIALOG_STATE_REPORT,
-                    event_data={
-                        'dialog_state': dialog_state,
-                    }
-                )
-            )
-
-    def emit_vad_event(self, event_type, identity = None):
-        """Emit VAD events to the GUI"""
-
-        self.socketio.emit('ipu_event', {'event_type': event_type, 'identity': identity}, to=self.sid)
-
-        if identity == 'user':
-            self.event_outlet(
-                FloorEvent(
-                    event_type=FloorEventType.IPU_ON_OFFSET_REPORT,
-                    event_data={'ipu_event': event_type}
-                )
-            )  # Emit to the event outlet for user VAD events
-
-    def dialog_ss_callback(self):
-        """
-        Callback function called when dialog_ss state is predicted.
-        """
-        # self.logger.debug(f"Dialog SS callback triggered for user {self.sid}")
-
-        # Emit dialog_ss callback event to GUI
-        self.emit_dialog_ss_callback()
-        
-    def emit_dialog_ss_callback(self, context_info = ''):
-        """Emit dialog_ss callback events to the GUI"""
-        self.socketio.emit('dialog_ss_callback', {'context_info': context_info}, to=self.sid)
 
     def warmup_compiled_methods(self):
         ## Push a few audio samples to feature gating queue of both human and system
