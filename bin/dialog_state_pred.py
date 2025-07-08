@@ -126,7 +126,7 @@ class DialogStateParams:
             if parent_logger is not None:
                 self.logger = parent_logger.getChild(f"DialogStateParams")
             else:
-                self.logger = setup_logger(f"DialogStateParams_{self.sid}", file_log_level="DEBUG", terminal_log_level="INFO")
+                self.logger = setup_logger(f"{self.sid}_DialogStateParams", file_log_level="DEBUG", terminal_log_level="INFO")
 
             ## Config for dialog state prediction
             self.dialog_state_pred_configs = DialogStateParams.DIALOG_STATE_PRED_CONFIGS
@@ -510,23 +510,24 @@ class DialogStateParams:
                 elif status == 'ipu_cl':
                     vad_state = True
                 else:
-                    raise ValueError(f"Unexpected VAD status: {status}")
+                    vad_state = None
 
-                ## Emit VAD state and event to the GUI for visualization
-                emit_vad_state_update(socketio = self.socketio, sid=self.sid, vad_state=vad_state,  identity=identity)
-                emit_vad_event(socketio = self.socketio, sid=self.sid, event_type = status, identity=identity)
+                if vad_state is not None:
+                    ## Emit VAD state and event to the GUI for visualization
+                    emit_vad_state_update(socketio = self.socketio, sid=self.sid, vad_state=vad_state,  identity=identity)
+                    emit_vad_event(socketio = self.socketio, sid=self.sid, event_type = status, identity=identity)
 
-                if identity == 'user':##User vad events are also sent as a floor event for subsequent processing
-                    self.event_outlet(
-                        FloorEvent(
-                            event_type=FloorEventType.IPU_ON_OFFSET_REPORT,
-                            event_data={'ipu_event': event_type}
-                        )
-                    ) 
+                    if identity == 'user':##User vad events are also sent as a floor event for subsequent processing
+                        self.event_outlet(
+                            FloorEvent(
+                                event_type=FloorEventType.IPU_ON_OFFSET_REPORT,
+                                event_data={'ipu_event': event_type}
+                            )
+                        ) 
 
 
-                # Put annotated audio into the queue for the feature gating thread
-                self.annotated_audio_queue[identity].put(annotated_audio)
+                    # Put annotated audio into the queue for the feature gating thread
+                    self.annotated_audio_queue[identity].put(annotated_audio)
 
             self.logger.debug(f"Sid: {self.sid} Stopping standalone VAD thread for '{identity}'")
         
@@ -708,7 +709,7 @@ class DialogStateParams:
 
                     elif feature_data['status'] == 'ipu_el':
 
-                        if self.current_human_ipu is None:
+                        if self.current_human_ipu is not None:
 
                             self.current_human_ipu.register_end_time(feature_data['time_stamp'])
 
