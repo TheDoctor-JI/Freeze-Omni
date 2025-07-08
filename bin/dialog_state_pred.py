@@ -525,7 +525,7 @@ class DialogStateParams:
                         self.event_outlet(
                             FloorEvent(
                                 event_type=FloorEventType.IPU_ON_OFFSET_REPORT,
-                                event_data={'ipu_event': event_type}
+                                event_data={'ipu_event': status}
                             )
                         ) 
 
