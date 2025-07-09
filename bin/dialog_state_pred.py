@@ -241,7 +241,7 @@ class DialogStateParams:
                 for identity in ['user', 'system']:
                     self.vad_threads[identity] = threading.Thread(
                         target=self.vad_annotation,
-                        args=(identity,self.all_ipus[identity]),
+                        args=(identity,),
                         name=f"VAD_Thread_{identity}"
                     )
                     self.vad_threads[identity].start()
@@ -387,7 +387,7 @@ class DialogStateParams:
             self.release()
             raise
 
-    def vad_annotation(self, identity, all_ipus: dict):
+    def vad_annotation(self, identity):
         """
         Standalone VAD thread that consumes raw audio for a specific identity,
         annotates it, and puts it into the corresponding annotated_audio_queue.
@@ -484,7 +484,7 @@ class DialogStateParams:
                         initial_chunk = annotated_audio['audio'],
                         pre_cached_chunks = annotated_audio['cached_audio']
                     )
-                    all_ipus[current_ipu.id] = current_ipu
+                    self.all_ipus[identity][current_ipu.id] = current_ipu
                     
 
                     ## Label the data with the current IPU ID
@@ -711,7 +711,7 @@ class DialogStateParams:
 
                 ## Update the response requirement of the associated IPU based on the predicted state
                 if feature_data['identity'] == 'user':
-                    
+                    self.logger.debug(f"Sid: {self.sid} Updating dialog state for user IPU {feature_data['ipu_id']}. Latest prediction is {predicted_state}")
                     user_ipu = self.all_ipus['user'].get(feature_data['ipu_id'], None)
                     if user_ipu is not None:
                         user_ipu.register_response_state(predicted_state)
