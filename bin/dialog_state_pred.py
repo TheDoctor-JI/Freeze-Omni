@@ -470,6 +470,7 @@ class DialogStateParams:
                 if status == 'ipu_sl':
 
                     ## Obtain a new ID for the new IPU
+                    ## TBD: this cause bug when stopping in the gui
                     if current_ipu is not None:
                         raise ValueError(f"We currently have IPU {current_ipu.id}, but a new IPU start is detected.")
 
