@@ -28,7 +28,6 @@ audio_feature_gating:
     context_duration_in_sec: 0.032 ## 32ms overlap for each input chunk
 
 
-## TBD: may need to work on the temperature for more reliable dialog state prediction
 inference_control:
   top_k: 5 # From server_alt.py, line 35 (argparse default is 5)
   top_p: 0.8 # From server_alt.py, line 36 (argparse default is 0.8)

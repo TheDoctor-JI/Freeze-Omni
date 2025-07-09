@@ -420,7 +420,7 @@ class AudioLLM(torch.nn.Module):
 
         ## This is where we actually run forward inference.
         prediction_probs, past_key_values, _ = self._generate_one_step(
-                                                    ## TBD: no need to deepcopy here because we do not have anything running in parallel in this code
+                                                    ## No need to deepcopy here
                                                     # copy.deepcopy(inputs), 
                                                     inputs,
                                                     do_prediction=do_prediction

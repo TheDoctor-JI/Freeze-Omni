@@ -681,6 +681,8 @@ class DialogStateParams:
 
             self.logger.debug(f"Sid: {self.sid} Starting dialog state prediction thread")
                 
+            total_prediction_cnt = 0
+
             while True:
 
                 time.sleep(DialogStateParams.SLEEP_INTERVAL)
@@ -703,6 +705,7 @@ class DialogStateParams:
                     self.logger.debug(f"Sid: {self.sid} Starting dialog state prediction for ipu_sl feature data of ipu {feature_data['ipu_id']}")
                     
                 predicted_state = self.llm_prefill(feature_data)
+                total_prediction_cnt += 1
 
                 if self.debug_time and feature_data['status'] == 'ipu_sl':
                     self.logger.debug(f"Sid: {self.sid} Dialog state prediction done.")
@@ -713,7 +716,10 @@ class DialogStateParams:
                     self.logger.debug(f"Sid: {self.sid} Updating dialog state for user IPU {feature_data['ipu_id']}. Latest prediction is {predicted_state}")
                     user_ipu = self.all_ipus['user'].get(feature_data['ipu_id'], None)
                     if user_ipu is not None:
-                        user_ipu.register_response_state(predicted_state)
+                        user_ipu.register_response_state(
+                            predicted_state,
+                            total_prediction_cnt
+                        )
 
         except Exception as e:
             self.logger.error(f"Error initializing DialogStateParams: {e}")
@@ -780,15 +786,6 @@ class DialogStateParams:
                 socketio=self.socketio,
                 sid=self.sid,
                 dialog_state=predicted_state
-            )
-            ## Also send the dialog state update event to the event outlet for further processing
-            self.event_outlet(
-                FloorEvent(
-                    event_type=FloorEventType.DIALOG_STATE_REPORT,
-                    event_data={
-                        'dialog_state': predicted_state,
-                    }
-                )
             )
 
 
