@@ -702,7 +702,6 @@ class DialogStateParams:
                     
                     self.logger.debug(f"Sid: {self.sid} Starting dialog state prediction for ipu_sl feature data of ipu {feature_data['ipu_id']}")
                     
-
                 predicted_state = self.llm_prefill(feature_data)
 
                 if self.debug_time and feature_data['status'] == 'ipu_sl':
