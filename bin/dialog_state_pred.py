@@ -37,7 +37,7 @@ import shortuuid
 
 def get_args():
 
-    inference_config_path = '/home/eeyifanshen/e2e_audio_LLM/dialog_turntaking_new/Freeze-Omni/configs/dialog_state_pred_config.yaml'
+    inference_config_path = '/home/eeyifanshen/e2e_audio_LLM/SocialTaskImplementation/dialog_turntaking/Freeze-Omni/configs/dialog_state_pred_config.yaml'
 
     # Load config from YAML file
     with open(inference_config_path, 'r') as f:
