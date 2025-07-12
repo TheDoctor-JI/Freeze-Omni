@@ -30,7 +30,7 @@ from models.ContextSerializer import ContextSerializer
 from flask import Blueprint, request
 from flask_socketio import disconnect
 from logger.logger import setup_logger
-from FloorState.FloorStateEvent import FloorStateDef, FloorEvent, FloorEventType
+from FloorState.floor_state_machine_io import FloorStateDef, FloorEvent, FloorEventType
 from FloorState.floor_state_emission import *
 from FloorState.IPUHandle import IPUHandle
 import shortuuid
