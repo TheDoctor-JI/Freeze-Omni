@@ -32,7 +32,7 @@ from flask_socketio import disconnect
 from logger.logger import setup_logger
 from FloorState.floor_state_machine_io import FloorStateDef, FloorEvent, FloorEventType
 from FloorState.floor_state_emission import *
-from FloorState.IPUHandle import IPUHandle
+from AudioLLMInterface.IPUHandle import IPUHandle
 import shortuuid
 
 def get_args():
