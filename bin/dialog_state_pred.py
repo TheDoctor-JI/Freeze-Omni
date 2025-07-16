@@ -562,12 +562,13 @@ class DialogStateParams:
                         ## TBD: performance?
                         audio_to_emit = {}
                         audio_to_emit['identity'] = identity
+                        audio_to_emit['status'] = status
                         audio_to_emit['audio_bytes'] = np_float32_audio_to_audio_bytes(annotated_audio['audio'])
                         audio_to_emit['time_stamp'] = annotated_audio['time_stamp']
                         if annotated_audio['cached_audio'] is not None:
-                            audio_to_emit['cached_audio'] = [np_float32_audio_to_audio_bytes(chunk) for chunk in annotated_audio['cached_audio']]
+                            audio_to_emit['cached_audio_bytes'] = [np_float32_audio_to_audio_bytes(chunk) for chunk in annotated_audio['cached_audio']]
                         else:
-                            audio_to_emit['cached_audio'] = []
+                            audio_to_emit['cached_audio_bytes'] = []
                         self.socketio.emit(
                             'tm_audio_chunk', 
                             audio_to_emit,
