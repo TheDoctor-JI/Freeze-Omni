@@ -34,6 +34,8 @@ from FloorState.floor_state_machine_io import FloorStateDef, FloorEvent, FloorEv
 from FloorState.floor_state_emission import *
 from AudioLLMInterface.IPUHandle import IPUHandle
 import shortuuid
+from utils.audio_helpers import np_float32_audio_to_audio_bytes
+
 
 def get_args():
 
@@ -77,6 +79,7 @@ class DialogStateParams:
     def __init__(self, sid, socketio, event_outlet, ipu_audio_outlet, parent_logger=None):
         try:
             self.sid = sid
+            self.tm_sid = None
             self.event_outlet = event_outlet
             self.ipu_audio_outlet = ipu_audio_outlet
             if parent_logger is not None:
@@ -160,6 +163,10 @@ class DialogStateParams:
             self.release()
             raise
     
+    def set_tm_sid(self, tm_sid):
+        self.tm_sid = tm_sid
+
+
     def reset_context(self):
         """Reset the conversation context"""
         try:
@@ -470,7 +477,6 @@ class DialogStateParams:
                 #     self.logger.debug(f"Sid: {self.sid} VAD annotation done for {identity}.")
                     
 
-                # Emit VAD events for monitoring GUI (only for user)
                 status = annotated_audio['status']
                 if status == 'ipu_sl':
 
@@ -527,7 +533,6 @@ class DialogStateParams:
                     ## Since this is the end of an IPU, reset the id
                     self.current_ipu[identity] = None
 
-
                 elif status == 'ipu_cl':
 
                     ## Add audio chunk to the current IPU
@@ -548,8 +553,27 @@ class DialogStateParams:
                     emit_vad_state_update(socketio = self.socketio, sid=self.sid, vad_state=vad_state,  identity=identity)
                     emit_vad_event(socketio = self.socketio, sid=self.sid, event_type = status, identity=identity)
 
-                    # Put annotated audio associated with an IPU into the queue for the feature gating thread
+                    ## Put annotated audio associated with an IPU into the queue for the feature gating thread
                     self.annotated_audio_queue[identity].put(annotated_audio)
+
+                    ## Also emit the chunk for the task manager to process
+                    if self.tm_sid is not None:
+                        ## Create json serializable data structure
+                        ## TBD: performance?
+                        audio_to_emit = {}
+                        audio_to_emit['identity'] = identity
+                        audio_to_emit['audio_bytes'] = np_float32_audio_to_audio_bytes(annotated_audio['audio'])
+                        audio_to_emit['time_stamp'] = annotated_audio['time_stamp']
+                        if annotated_audio['cached_audio'] is not None:
+                            audio_to_emit['cached_audio'] = [np_float32_audio_to_audio_bytes(chunk) for chunk in annotated_audio['cached_audio']]
+                        else:
+                            audio_to_emit['cached_audio'] = []
+                        self.socketio.emit(
+                            'tm_audio_chunk', 
+                            audio_to_emit,
+                            to = self.tm_sid,
+                        )
+                   
 
             self.logger.debug(f"Sid: {self.sid} Stopping standalone VAD thread for '{identity}'")
         
@@ -799,7 +823,6 @@ class DialogStateParams:
             predicted_state = None  # No dialog state prediction for system input
 
         return predicted_state
-
 
     def warmup_compiled_methods(self):
         ## Push a few audio samples to feature gating queue of both human and system
