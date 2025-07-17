@@ -380,7 +380,7 @@ class DialogStateParams:
                 if(audio_dat_dict['enc'] != 's16le'):
                     raise ValueError(f"Expected audio encoding '{DialogStateParams.EXPECTED_ENCODING}', but got {audio_dat_dict['enc']}")
                 
-                audio_chunk = np.frombuffer(bytes(audio_dat_dict['audio']), dtype=np.int16)
+                audio_chunk = np.frombuffer(audio_dat_dict['audio'], dtype=np.int16)
                 audio_chunk = audio_chunk.astype(np.float32) / 32767.0
 
                 ## Create a new dict as a deep copy
