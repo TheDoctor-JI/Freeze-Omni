@@ -76,12 +76,12 @@ class DialogStateParams:
     RESPONSE_THRESHOLD = DIALOG_STATE_PRED_CONFIGS['dialog_state_decision']['resp_threshold']
     SLEEP_INTERVAL = DIALOG_STATE_PRED_CONFIGS['thread_sleep_interval']
 
-    def __init__(self, sid, socketio, event_outlet, ipu_audio_outlet, parent_logger=None):
+    def __init__(self, sid, socketio, event_outlet, user_ipu_outlet_list: list, parent_logger=None):
         try:
             self.sid = sid
             self.tm_sid = None
             self.event_outlet = event_outlet
-            self.ipu_audio_outlet = ipu_audio_outlet
+            self.user_ipu_outlet_list = user_ipu_outlet_list
             if parent_logger is not None:
                 self.logger = parent_logger.getChild(f"DialogStateParams")
             else:
@@ -508,8 +508,9 @@ class DialogStateParams:
 
 
                     if identity == 'user':
-                        ##Forward the IPU handle object of the user to the LLM
-                        self.ipu_audio_outlet(self.current_ipu[identity])
+                        ##Forward the IPU handle object of the user to the external subscribers
+                        for outlet in self.user_ipu_outlet_list:
+                            outlet(self.current_ipu[identity])
                         ##Also forward it to the floor state machine
                         self.event_outlet(self.current_ipu[identity])
 
