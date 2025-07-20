@@ -399,6 +399,9 @@ class DialogStateParams:
             self.release()
             raise
 
+    
+
+
     def vad_annotation(self, identity):
         """
         Standalone VAD thread that consumes raw audio for a specific identity,
@@ -418,7 +421,7 @@ class DialogStateParams:
                 'time_stamp': None  # Use current time as timestamp
             }
 
-            self.current_ipu[identity] = None
+            self.current_ipu[identity] = []
             while not self.stop_all_threads:
 
                 time.sleep(DialogStateParams.SLEEP_INTERVAL)
@@ -480,67 +483,77 @@ class DialogStateParams:
                 status = annotated_audio['status']
                 if status == 'ipu_sl':
 
-                    ## Obtain a new ID for the new IPU
-                    if self.current_ipu[identity] is not None:
-                        raise ValueError(f"We currently have IPU {self.current_ipu[identity].id}, but a new IPU start is detected.")
-
-                    total_ipus += 1
-                    
-                    ## Instantiate a new IPUHandle object for all audio data associated with this IPU
-                    self.current_ipu[identity] = IPUHandle(
-                        sid = self.sid,
-                        ipu_id = total_ipus,
-                        identity = identity,
-                        start_timestamp = annotated_audio['time_stamp'],
-                        initial_chunk = annotated_audio['audio'],
-                        pre_cached_chunks = annotated_audio['cached_audio']
-                    )
-                    self.all_ipus[identity][self.current_ipu[identity].id] = self.current_ipu[identity]
-                    
-
-                    ## Label the data with the current IPU ID
-                    annotated_audio['ipu_id'] = self.current_ipu[identity].id
-                    
                     vad_state = True
 
                     if(self.debug_time):##VAD annotation usually takes less than 10ms
-                        self.logger.debug(f"Sid: {self.sid} SL chunk obtained for {self.current_ipu[identity].id}.")
+                        self.logger.debug(f"Sid: {self.sid} SL chunk obtained for {self.current_ipu[identity][0].id}.")
 
+
+
+                    ## Obtain a new ID for the new IPU
+                    if len(self.current_ipu[identity]) > 0:
+                        raise ValueError(f"We currently have IPU {self.current_ipu[identity][0].id}, but a new IPU start is detected.")
+
+                    total_ipus += 1
+                    
+                    ## For each user IPU outlet, instantiate a new IPUHandle object for all audio data associated with this IPU
+                    self.current_ipu[identity] = []
+                    for i in range(len(self.user_ipu_outlet_list)+1):
+                        self.current_ipu[identity].append(
+                            IPUHandle(
+                                sid = self.sid,
+                                ipu_id = total_ipus,##Note they share the same id
+                                identity = identity,
+                                start_timestamp = annotated_audio['time_stamp'],
+                                initial_chunk = annotated_audio['audio'],
+                                pre_cached_chunks = annotated_audio['cached_audio']
+                            )
+                        )
+
+                    ## Register this list of IPU handles
+                    self.all_ipus[identity][self.current_ipu[identity][0].id] = self.current_ipu[identity]
+                    
+
+                    ## Label the data with the current IPU ID
+                    annotated_audio['ipu_id'] = self.current_ipu[identity][0].id
+                    
 
                     if identity == 'user':
                         ##Forward the IPU handle object of the user to the external subscribers
-                        for outlet in self.user_ipu_outlet_list:
-                            outlet(self.current_ipu[identity])
-                        ##Also forward it to the floor state machine
-                        self.event_outlet(self.current_ipu[identity])
+                        for i, outlet in enumerate(self.user_ipu_outlet_list):
+                            outlet(self.current_ipu[identity][i])
+                        ##Also forward it to the floor state machine (this is why we create len(self.user_ipu_outlet_list) + 1 IPU handles)
+                        self.event_outlet(self.current_ipu[identity][len(self.user_ipu_outlet_list)])
 
                 elif status == 'ipu_el':
 
-                    ## Add audio chunk to the current IPU
-                    self.current_ipu[identity].add_chunk(annotated_audio['audio'])
-
-                    ## Set the end timestamp for the current IPU
-                    self.current_ipu[identity].set_end_timestamp(annotated_audio['time_stamp'])
-
-                    ## Use existing IPU ID for the end of the IPU
-                    annotated_audio['ipu_id'] = self.current_ipu[identity].id
-                
                     vad_state = False
 
                     if self.debug_time:##VAD annotation usually takes less than 10ms
-                        self.logger.debug(f"Sid: {self.sid} EL chunk obtained for {self.current_ipu[identity].id}.")
+                        self.logger.debug(f"Sid: {self.sid} EL chunk obtained for {self.current_ipu[identity][0].id}.")
 
 
+                    ## Add audio chunk to the current IPU
+                    for ipu_handle in self.current_ipu[identity]:
+                        ipu_handle.add_chunk(annotated_audio['audio'])
+
+                        ## Set the end timestamp for the current IPU
+                        ipu_handle.set_end_timestamp(annotated_audio['time_stamp'])
+
+                    ## Use existing IPU ID for the end of the IPU
+                    annotated_audio['ipu_id'] = self.current_ipu[identity][0].id
+                
                     ## Since this is the end of an IPU, reset the id
-                    self.current_ipu[identity] = None
+                    self.current_ipu[identity] = []
 
                 elif status == 'ipu_cl':
 
                     ## Add audio chunk to the current IPU
-                    self.current_ipu[identity].add_chunk(annotated_audio['audio'])
+                    for ipu_handle in self.current_ipu[identity]:
+                        ipu_handle.add_chunk(annotated_audio['audio'])
 
                     ## Use existing IPU ID for the continuation of an IPU
-                    annotated_audio['ipu_id'] = self.current_ipu[identity].id
+                    annotated_audio['ipu_id'] = self.current_ipu[identity][0].id
 
                     vad_state = True
 
