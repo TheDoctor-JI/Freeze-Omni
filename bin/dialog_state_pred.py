@@ -185,8 +185,8 @@ class DialogStateParams:
             }
 
             self.current_ipu = {
-                'user': None,
-                'system': None
+                'user': [],
+                'system': []
             }
 
             self.annotated_audio_queue = {
@@ -757,13 +757,17 @@ class DialogStateParams:
 
                 ## Update the response requirement of the associated IPU based on the predicted state
                 if feature_data['identity'] == 'user':
+
                     self.logger.debug(f"Sid: {self.sid} Updating dialog state for user IPU {feature_data['ipu_id']}. Latest prediction is {predicted_state}")
-                    user_ipu = self.all_ipus['user'].get(feature_data['ipu_id'], None)
-                    if user_ipu is not None:
-                        user_ipu.register_response_state(
-                            predicted_state,
-                            total_prediction_cnt
-                        )
+
+                    user_ipu_handle_list = self.all_ipus['user'].get(feature_data['ipu_id'], [])
+
+                    if len(user_ipu_handle_list) > 0:
+                        for user_ipu in user_ipu_handle_list:
+                            user_ipu.register_response_state(
+                                predicted_state,
+                                total_prediction_cnt
+                            )
 
         except Exception as e:
             self.logger.error(f"Error initializing DialogStateParams: {e}")
