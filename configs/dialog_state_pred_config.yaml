@@ -21,8 +21,8 @@ audio_feature_gating:
   onset_input_chunk_cache_size: 0 # From AudioFeatureGating.py, line 15
 
   fbank:
-    # expected_audio_chunk_duration_in_sec: 0.224 ## 224ms
-    expected_audio_chunk_duration_in_sec: 0.24 ## 240ms
+    expected_audio_chunk_duration_in_sec: 0.224 ## 224ms
+    # expected_audio_chunk_duration_in_sec: 0.24 ## 240ms
     feat_dim: 80 # From AudioFeatureGating.py, line 10
     audio_to_proc_per_step_in_sec: 0.016 ##16ms
     step_size_in_sec: 0.008 ## 10ms
