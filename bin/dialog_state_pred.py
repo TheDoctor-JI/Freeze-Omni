@@ -573,7 +573,6 @@ class DialogStateParams:
                     ## Also emit the chunk for the task manager to process
                     if self.tm_sid is not None:
                         ## Create json serializable data structure
-                        ## TBD: performance?
                         audio_to_emit = {}
                         audio_to_emit['identity'] = identity
                         audio_to_emit['status'] = status
