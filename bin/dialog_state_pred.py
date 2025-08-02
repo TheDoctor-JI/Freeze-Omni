@@ -115,6 +115,8 @@ class DialogStateParams:
             self.past_key_values = None
             self.dialog_state_callback = None
             
+            self.aggregated_audio_data_dict = {}
+
             self.feature_gater = {
                 'user': AudioFeatureGating(
                     sample_rate=self.dialog_state_pred_configs['audio']['expected_sampling_rate'],
@@ -156,6 +158,7 @@ class DialogStateParams:
 
             # Control flags
             self.stop_all_threads = False
+            self.pause_all_threads = True
             
             
         except Exception as e:
@@ -166,10 +169,12 @@ class DialogStateParams:
     def set_tm_sid(self, tm_sid):
         self.tm_sid = tm_sid
 
-
     def reset_context(self):
         """Reset the conversation context"""
         try:
+
+            self.pause_all_threads = True
+            time.sleep(0.3)## Sleep for roughly one iteration's processing time to ensure all processing has finished
 
             # Audio queues for user and system separately
             self.audio_data_input_queue = ProcPCMQueue()
@@ -178,6 +183,9 @@ class DialogStateParams:
                 'user': ProcPCMQueue(),
                 'system': ProcPCMQueue()
             }
+
+            self.reset_vad_aud_aggregation('user')
+            self.reset_vad_aud_aggregation('system')
 
             self.all_ipus = {
                 'user': {},
@@ -197,7 +205,6 @@ class DialogStateParams:
             ## Main queue for dialog state predicting, input is sequentialized
             self.processed_pcm_queue = ProcPCMQueue()
 
-
             # Reset feature gater state for both
             if hasattr(self, 'feature_gater'):
                 self.feature_gater['user'].reset()
@@ -208,12 +215,10 @@ class DialogStateParams:
                 self.standalone_vad['user'].reset()
                 self.standalone_vad['system'].reset()
 
-
             # Reset context serializer
             if hasattr(self, 'context_serializer'):
                 self.context_serializer.reset()
                 
-
             #Initially or upon reset, only contains a system prompt
             self.past_key_values = deepcopy(self.system_role)
 
@@ -231,6 +236,9 @@ class DialogStateParams:
                 }
             }
 
+            self.pause_all_threads = False
+
+            self.logger.debug(f"Context reset successfully.")
 
         except Exception as e:
             self.logger.error(f"Error resetting context: {e}")
@@ -365,6 +373,9 @@ class DialogStateParams:
                 ## Get the audio data from the input queue
                 time.sleep(DialogStateParams.SLEEP_INTERVAL)
 
+                if self.pause_all_threads:
+                    continue
+
                 data_item = self.audio_data_input_queue.get()
 
                 if data_item is None:
@@ -399,7 +410,14 @@ class DialogStateParams:
             self.release()
             raise
 
-    
+    def reset_vad_aud_aggregation(self, identity):
+
+        self.aggregated_audio_data_dict[identity] = {
+            'audio': np.array([], dtype=np.float32),  # Reset to empty array
+            'sr': DialogStateParams.EXPECTED_SAMPLING_RATE,
+            'enc': DialogStateParams.EXPECTED_ENCODING,
+            'time_stamp': None  # Use current time as timestamp
+        }
 
 
     def vad_annotation(self, identity):
@@ -414,44 +432,42 @@ class DialogStateParams:
             self.logger.debug(f"Sid: {self.sid} Starting standalone VAD thread for '{identity}' with chunk size: {chunk_size}")
             
             
-            aggregated_audio_data_dict = {
-                'audio': np.array([], dtype=np.float32),  # Initialize with empty array
-                'sr': DialogStateParams.EXPECTED_SAMPLING_RATE,
-                'enc': DialogStateParams.EXPECTED_ENCODING,
-                'time_stamp': None  # Use current time as timestamp
-            }
+            self.reset_vad_aud_aggregation(identity)
 
             self.current_ipu[identity] = []
             while not self.stop_all_threads:
 
                 time.sleep(DialogStateParams.SLEEP_INTERVAL)
 
+                if self.pause_all_threads:
+                    continue
+
                 new_audio_data_dict = self.raw_pcm_queue[identity].get()
                 if new_audio_data_dict is None:
                     continue
 
                 ## Gather sufficient data before running the VAD
-                if(len(aggregated_audio_data_dict['audio']) < chunk_size):
+                if(len(self.aggregated_audio_data_dict[identity]['audio']) < chunk_size):
                     
                     ## Get more samples
-                    samples_to_add = chunk_size - len(aggregated_audio_data_dict['audio'])
+                    samples_to_add = chunk_size - len(self.aggregated_audio_data_dict[identity]['audio'])
                     samples_obtained = len(new_audio_data_dict['audio'])
 
                     if samples_obtained < samples_to_add:
                         ## Not enough samples, just add the available samples, update the timestamp, and then we will wait for more samples
-                        aggregated_audio_data_dict['audio'] = np.concatenate((aggregated_audio_data_dict['audio'], new_audio_data_dict['audio']))
-                        aggregated_audio_data_dict['time_stamp'] = new_audio_data_dict['time_stamp']
+                        self.aggregated_audio_data_dict[identity]['audio'] = np.concatenate((self.aggregated_audio_data_dict[identity]['audio'], new_audio_data_dict['audio']))
+                        self.aggregated_audio_data_dict[identity]['time_stamp'] = new_audio_data_dict['time_stamp']
                         continue
                     else:
                         ## Enough samples, add the samples and update the timestamp
-                        aggregated_audio_data_dict['audio'] = np.concatenate((aggregated_audio_data_dict['audio'], new_audio_data_dict['audio'][:samples_to_add]))
-                        aggregated_audio_data_dict['time_stamp'] = new_audio_data_dict['time_stamp']
+                        self.aggregated_audio_data_dict[identity]['audio'] = np.concatenate((self.aggregated_audio_data_dict[identity]['audio'], new_audio_data_dict['audio'][:samples_to_add]))
+                        self.aggregated_audio_data_dict[identity]['time_stamp'] = new_audio_data_dict['time_stamp']
 
                         ## We will process this aggregated audio data now
-                        sufficient_audio_data_dict = aggregated_audio_data_dict
+                        sufficient_audio_data_dict = self.aggregated_audio_data_dict[identity]
 
                         ## Whatever is left in the new audio data becomes the new aggregated audio data
-                        aggregated_audio_data_dict = {
+                        self.aggregated_audio_data_dict[identity] = {
                             'audio': new_audio_data_dict['audio'][samples_to_add:],  # Remaining audio data
                             'sr': new_audio_data_dict['sr'],  # Sampling rate, e.g.,
                             'enc': new_audio_data_dict['enc'],  # Encoding, e.g., 's16le'
@@ -459,15 +475,10 @@ class DialogStateParams:
                         }
                 else:
                     ## We have enough samples, just use the aggregated audio data
-                    sufficient_audio_data_dict = aggregated_audio_data_dict
+                    sufficient_audio_data_dict = self.aggregated_audio_data_dict[identity]
                     
                     ## Reset the aggregated audio data
-                    aggregated_audio_data_dict = {
-                        'audio': np.array([], dtype=np.float32),  # Reset to empty array
-                        'sr': DialogStateParams.EXPECTED_SAMPLING_RATE,
-                        'enc': DialogStateParams.EXPECTED_ENCODING,
-                        'time_stamp': None  # Use current time as timestamp
-                    }
+                    self.reset_vad_aud_aggregation(identity)
 
                 # if(self.debug_time):
                 #     self.logger.debug(f"Sid: {self.sid} VAD received raw audio chunk of size: {len(sufficient_audio_data_dict['audio'])} for '{identity}'")
@@ -608,6 +619,9 @@ class DialogStateParams:
 
                 time.sleep(DialogStateParams.SLEEP_INTERVAL)
                 
+                if self.pause_all_threads:
+                    continue
+
                 # Get annotated audio chunk for the specific identity
                 annotated_audio = self.annotated_audio_queue[identity].get()
                 
@@ -693,7 +707,12 @@ class DialogStateParams:
             self.logger.debug(f"Sid: {self.sid} Starting context serializer thread.")
             
             while not self.stop_all_threads:
+
                 time.sleep(DialogStateParams.SLEEP_INTERVAL)
+
+
+                if self.pause_all_threads:
+                    continue
 
                 ## Get the next feature to process
                 feature_to_process = self.context_serializer.get_next_feature()
@@ -730,6 +749,9 @@ class DialogStateParams:
 
                 time.sleep(DialogStateParams.SLEEP_INTERVAL)
                 
+                if self.pause_all_threads:
+                    continue
+
                 if self.stop_all_threads:
                     self.logger.debug(f"Sid: {self.sid} Stopping dialog state prediction thread")
                     break
