@@ -11,7 +11,7 @@ audio:
 vad:
   use_standalone_vad: true # From start_monitoring.sh, line 48 (flag is present)
   vad_threshold: 0.5 # From PureVAD.py, line 16
-  min_silent_duration_second: 0.5 # From PureVAD.py, line 17 (300ms)
+  min_silent_duration_second: 0.3 # From PureVAD.py, line 17 (300ms)
   speech_pad_second: 0.03 # From PureVAD.py, line 18 (30ms)
   vad_history_cache_chunk_cnt: 2 # From PureVAD.py, line 10
 
