@@ -11,13 +11,11 @@ import soundfile as sf
 import subprocess
 import concurrent.futures
 
-from models.decoder.llm2tts import llm2TTS
 from models.pipeline import inferencePipeline
 
 class PooledCodecTTSObject:
     def __init__(self, model_path):
         self.in_use = False
-        self.tts_proc = llm2TTS(model_path)
 
 class TTSObjectPool:
     def __init__(self, size=10, model_path=""):
