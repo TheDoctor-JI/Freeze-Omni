@@ -23,7 +23,7 @@ fi
 MODEL_PATH="./checkpoints"
 LLM_PATH="./Qwen2-7B-Instruct"
 IP="localhost"
-PORT="8765"
+PORT="8760"
 MAX_USERS=2
 llm_exec_nums=2 # Recommended to set to 1, requires about 15GB GPU memory per exec. Try setting a value greater than 1 on a better GPU to improve concurrency performance.
 
@@ -42,7 +42,7 @@ echo ""
 
 
 # # On local machine: forward remote port
-# ssh -L 8765:localhost:8765 eez170.ece.ust.hk
+# ssh -L 8760:localhost:8760 eez170.ece.ust.hk
 
 
 # Start the server

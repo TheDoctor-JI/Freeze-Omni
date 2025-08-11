@@ -58,14 +58,14 @@ The enhanced demo displays the current system status:
        --model_path ./checkpoints \
        --llm_path ./Qwen2-7B-Instruct \
        --ip localhost \
-       --port 8765 \
+       --port 8760 \
        --max_users 1
    ```
 
 ### Accessing the Interface
 
-- **Basic Demo**: `https://localhost:8765/`
-- **Enhanced Demo**: `https://localhost:8765/enhanced`
+- **Basic Demo**: `https://localhost:8760/`
+- **Enhanced Demo**: `https://localhost:8760/enhanced`
 
 ### Interaction Flow
 
