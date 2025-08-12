@@ -480,25 +480,21 @@ class DialogStateParams:
                     ## Reset the aggregated audio data
                     self.reset_vad_aud_aggregation(identity)
 
-                # if(self.debug_time):
-                #     self.logger.debug(f"Sid: {self.sid} VAD received raw audio chunk of size: {len(sufficient_audio_data_dict['audio'])} for '{identity}'")
+                if(self.debug_time):
+                    self.logger.debug(f"Sid: {self.sid} VAD received raw audio chunk of size: {len(sufficient_audio_data_dict['audio'])} for '{identity}'")
                     
                 ## Run VAD prediction to get annotated audio
                 ## Return: {'audio': audio_chunk, 'status': 'ipu_sl', 'cached_audio': [chunk1, chunk2...], 'time_stamp': a timestamp}
                 annotated_audio = self.standalone_vad[identity].predict(sufficient_audio_data_dict)
 
-                # if(self.debug_time):
-                #     self.logger.debug(f"Sid: {self.sid} VAD annotation done for {identity}.")
+                if(self.debug_time):
+                    self.logger.debug(f"Sid: {self.sid} VAD annotation done for {identity}.")
                     
 
                 status = annotated_audio['status']
                 if status == 'ipu_sl':
 
                     vad_state = True
-
-                    if(self.debug_time):##VAD annotation usually takes less than 10ms
-                        self.logger.debug(f"Sid: {self.sid} SL chunk obtained for {self.current_ipu[identity][0].id}.")
-
 
 
                     ## Obtain a new ID for the new IPU
@@ -507,6 +503,9 @@ class DialogStateParams:
 
                     total_ipus += 1
                     
+                    if(self.debug_time):##VAD annotation usually takes less than 10ms
+                        self.logger.debug(f"Sid: {self.sid} SL chunk obtained the #{total_ipus} ipu of idetity={identity}")
+
                     ## For each user IPU outlet, instantiate a new IPUHandle object for all audio data associated with this IPU
                     self.current_ipu[identity] = []
                     for i in range(len(self.user_ipu_outlet_list)+1):
@@ -642,8 +641,8 @@ class DialogStateParams:
                     gated_feature_data['identity'] = identity
                     gated_feature_data['ipu_id'] = annotated_audio['ipu_id']  # Use the IPU ID from the annotated audio 
 
-                    # if self.debug_time:
-                    #     self.logger.debug(f"Sid: {self.sid} Approved audio feature, status: {gated_feature_data['status']}, identity: {identity}")
+                    if self.debug_time:
+                        self.logger.debug(f"Sid: {self.sid} Approved audio feature, status: {gated_feature_data['status']}, identity: {identity}")
 
 
                     if 'time_stamp' in annotated_audio:
@@ -651,8 +650,8 @@ class DialogStateParams:
                     
                     if gated_feature_data['status'] == 'ipu_sl':
 
-                        # if(self.debug_time):##fbank feature gating usually takes around 20ms
-                        #     self.logger.debug(f"Sid: {self.sid} SL chunk approved for {identity}.")
+                        if(self.debug_time):##fbank feature gating usually takes around 20ms
+                            self.logger.debug(f"Sid: {self.sid} SL chunk approved for {identity}.")
 
                         for i, feature in enumerate(gated_feature_data['feature_last_chunk']):
                             feature_item = {
@@ -663,8 +662,8 @@ class DialogStateParams:
                                 'ipu_id': gated_feature_data['ipu_id']  ## Keep these features associated with the same IPU ID
                             }
 
-                            # if self.debug_time:
-                            #     self.logger.debug(f"Sid: {self.sid} Adding feature chunk, status: {feature_item['status']}, identity: {identity}")
+                            if self.debug_time:
+                                self.logger.debug(f"Sid: {self.sid} Adding feature chunk, status: {feature_item['status']}, identity: {identity}")
 
                             self.context_serializer.add_feature_chunk(feature_item)
                         
@@ -677,15 +676,15 @@ class DialogStateParams:
                             'ipu_id': gated_feature_data['ipu_id']
                         }
 
-                        # if self.debug_time:
-                        #     self.logger.debug(f"Sid: {self.sid} Adding feature chunk, status: {feature_item['status']}, identity: {identity}")
+                        if self.debug_time:
+                            self.logger.debug(f"Sid: {self.sid} Adding feature chunk, status: {feature_item['status']}, identity: {identity}")
 
                         self.context_serializer.add_feature_chunk(feature_item)
 
                     else:
 
-                        # if self.debug_time:
-                        #     self.logger.debug(f"Sid: {self.sid} Adding feature chunk, status: {feature_item['status']}, identity: {identity}")
+                        if self.debug_time:
+                            self.logger.debug(f"Sid: {self.sid} Adding feature chunk, status: {feature_item['status']}, identity: {identity}")
 
                         self.context_serializer.add_feature_chunk(gated_feature_data)
 
@@ -722,8 +721,8 @@ class DialogStateParams:
 
                 ## Send to the main processing queue for dialog state prediction
                 if feature_to_process is not None:
-                    # if self.debug_time:
-                    #     self.logger.debug(f"Sid: {self.sid} Comitting feature to processed_pcm_queue, status: {feature_to_process['status']}, identity: {feature_to_process.get('identity', 'N/A')}")
+                    if self.debug_time:
+                        self.logger.debug(f"Sid: {self.sid} Comitting feature to processed_pcm_queue, status: {feature_to_process['status']}, identity: {feature_to_process.get('identity', 'N/A')}")
 
                     self.processed_pcm_queue.put(feature_to_process)
             
@@ -765,14 +764,14 @@ class DialogStateParams:
                 
 
                 # Always run forward processing
-                if self.debug_time and feature_data['status'] == 'ipu_sl':
+                if self.debug_time:
                     
-                    self.logger.debug(f"Sid: {self.sid} Starting dialog state prediction for ipu_sl feature data of ipu {feature_data['ipu_id']}")
+                    self.logger.debug(f"Sid: {self.sid} Starting dialog state prediction for feature data of ipu {feature_data['ipu_id']} with status {feature_data['status']}")
                     
                 predicted_state = self.llm_prefill(feature_data)
                 total_prediction_cnt += 1
 
-                if self.debug_time and feature_data['status'] == 'ipu_sl':
+                if self.debug_time:
                     self.logger.debug(f"Sid: {self.sid} Dialog state prediction done.")
 
 
@@ -871,7 +870,7 @@ class DialogStateParams:
         for identity in ['user', 'system']:
             chunk_size = self.standalone_vad[identity].get_chunk_size()
             ## Push directly to the feature gating queue
-            self.logger.info(f"Fabricating sl chunk for {identity}")
+            self.logger.debug(f"Fabricating sl chunk for {identity}")
             self.annotated_audio_queue[identity].put({
                 'audio': np.zeros(chunk_size, dtype=np.float32),
                 'sr': DialogStateParams.EXPECTED_SAMPLING_RATE,
@@ -881,7 +880,7 @@ class DialogStateParams:
                 'ipu_id': 'warmup_ipu'
             })
             for i in range(num_of_cl_chunks):
-                self.logger.info(f"Fabricating cl chunk {i + 1}/{num_of_cl_chunks} for {identity}")
+                self.logger.debug(f"Fabricating cl chunk {i + 1}/{num_of_cl_chunks} for {identity}")
                 self.annotated_audio_queue[identity].put({
                     'audio': np.zeros(chunk_size, dtype=np.float32),
                     'sr': DialogStateParams.EXPECTED_SAMPLING_RATE,
@@ -890,7 +889,7 @@ class DialogStateParams:
                     'time_stamp': time.time(),
                     'ipu_id': 'warmup_ipu'
                 })
-            self.logger.info(f"Fabricating el chunk for {identity}")
+            self.logger.debug(f"Fabricating el chunk for {identity}")
             self.annotated_audio_queue[identity].put({
                 'audio': np.zeros(chunk_size, dtype=np.float32),
                 'sr': DialogStateParams.EXPECTED_SAMPLING_RATE,
@@ -901,7 +900,7 @@ class DialogStateParams:
             })
             time.sleep(1)  # Give some time for the feature gating thread to process these samples before pushing for the other identity
 
-        self.logger.info(f"Fabricated audio data for dialogue state prediction warm up, pending processing...")
+        self.logger.debug(f"Fabricated audio data for dialogue state prediction warm up, pending processing...")
 
         time.sleep(15)
 
