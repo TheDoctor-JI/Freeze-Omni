@@ -866,10 +866,12 @@ class DialogStateParams:
 
     def warmup_compiled_methods(self):
         ## Push a few audio samples to feature gating queue of both human and system
+        self.logger.info(f"Warming up dialogue state prediction compiled methods for user {self.sid}...")        
         num_of_cl_chunks = 5
         for identity in ['user', 'system']:
             chunk_size = self.standalone_vad[identity].get_chunk_size()
             ## Push directly to the feature gating queue
+            self.logger.info(f"Fabricating sl chunk for {identity}")
             self.annotated_audio_queue[identity].put({
                 'audio': np.zeros(chunk_size, dtype=np.float32),
                 'sr': DialogStateParams.EXPECTED_SAMPLING_RATE,
@@ -879,6 +881,7 @@ class DialogStateParams:
                 'ipu_id': 'warmup_ipu'
             })
             for i in range(num_of_cl_chunks):
+                self.logger.info(f"Fabricating cl chunk {i + 1}/{num_of_cl_chunks} for {identity}")
                 self.annotated_audio_queue[identity].put({
                     'audio': np.zeros(chunk_size, dtype=np.float32),
                     'sr': DialogStateParams.EXPECTED_SAMPLING_RATE,
@@ -887,6 +890,7 @@ class DialogStateParams:
                     'time_stamp': time.time(),
                     'ipu_id': 'warmup_ipu'
                 })
+            self.logger.info(f"Fabricating el chunk for {identity}")
             self.annotated_audio_queue[identity].put({
                 'audio': np.zeros(chunk_size, dtype=np.float32),
                 'sr': DialogStateParams.EXPECTED_SAMPLING_RATE,
@@ -897,6 +901,8 @@ class DialogStateParams:
             })
             time.sleep(1)  # Give some time for the feature gating thread to process these samples before pushing for the other identity
 
+        self.logger.info(f"Fabricated audio data for dialogue state prediction warm up, pending processing...")
+
         time.sleep(15)
 
         ## Wait for the feature gating threads to finish processing
@@ -906,4 +912,4 @@ class DialogStateParams:
         ## Wait a bit longer to make sure the processing of the last chunk is done
         time.sleep(5)
 
-        self.logger.debug(f"DialogParams: Warmed up compiled methods for user {self.sid}.")
+        self.logger.info(f"DialogParams: warm up complete.")
