@@ -21,13 +21,19 @@ audio_feature_gating:
   onset_input_chunk_cache_size: 0 # From AudioFeatureGating.py, line 15
 
   fbank:
-    expected_audio_chunk_duration_in_sec: 0.256 ## 256ms
-    # expected_audio_chunk_duration_in_sec: 0.24 ## 240ms
     feat_dim: 80 # From AudioFeatureGating.py, line 10
+
+    # ## for dtln processing
+    # expected_audio_chunk_duration_in_sec: 0.256 ## 256ms
+    # audio_to_proc_per_step_in_sec: 0.016 ##16ms
+    # step_size_in_sec: 0.008 ## 10ms
+    # context_duration_in_sec: 0.032 ## 32ms overlap for each input chunk
+
+    ## for webrtc processing
+    expected_audio_chunk_duration_in_sec: 0.24 ## 240ms
     audio_to_proc_per_step_in_sec: 0.016 ##16ms
     step_size_in_sec: 0.008 ## 10ms
-    context_duration_in_sec: 0.032 ## 32ms overlap for each input chunk
-
+    context_duration_in_sec: 0.040 ## 40ms overlap for each input chunk
 
 inference_control:
   top_k: 5 # From server_alt.py, line 35 (argparse default is 5)
