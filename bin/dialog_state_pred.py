@@ -406,7 +406,7 @@ class DialogStateParams:
                 self.raw_pcm_queue[identity].put(new_audio_dat_dict)
         
         except Exception as e:
-            self.logger.error(f"Error initializing DialogStateParams: {e}")
+            self.logger.error(f"Error receiving chunks: {e}")
             self.release()
             raise
 
@@ -602,7 +602,7 @@ class DialogStateParams:
             self.logger.debug(f"Sid: {self.sid} Stopping standalone VAD thread for '{identity}'")
         
         except Exception as e:
-            self.logger.error(f"Error initializing DialogStateParams: {e}")
+            self.logger.error(f"Error annotation vad: {e}")
             self.release()
             raise
 
@@ -691,7 +691,7 @@ class DialogStateParams:
             self.logger.debug(f"Sid: {self.sid} Stopping feature gating thread for '{identity}'.")
 
         except Exception as e:
-            self.logger.error(f"Error initializing DialogStateParams: {e}")
+            self.logger.error(f"Error producing fbank features: {e}")
             self.release()
             raise
 
@@ -729,7 +729,7 @@ class DialogStateParams:
             self.logger.debug(f"Sid: {self.sid} Stopping context serializer thread.")
 
         except Exception as e:
-            self.logger.error(f"Error initializing DialogStateParams: {e}")
+            self.logger.error(f"Error serializing features: {e}")
             self.release()
             raise
 
@@ -790,7 +790,7 @@ class DialogStateParams:
                             )
 
         except Exception as e:
-            self.logger.error(f"Error initializing DialogStateParams: {e}")
+            self.logger.error(f"Error predicting dialogue state: {e}")
             self.release()
             raise
         
