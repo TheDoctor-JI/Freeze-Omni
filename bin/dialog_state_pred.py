@@ -39,7 +39,7 @@ from utils.audio_helpers import np_float32_audio_to_audio_bytes, np_float32_audi
 
 def get_args():
 
-    inference_config_path = '/home/eeyifanshen/e2e_audio_LLM/SocialTaskImplementation/floor_coordinator/Freeze-Omni/configs/dialog_state_pred_config.yaml'
+    inference_config_path = f'{os.path.dirname(__file__)}/../configs/dialog_state_pred_config.yaml'
 
     # Load config from YAML file
     with open(inference_config_path, 'r') as f:
