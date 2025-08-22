@@ -18,15 +18,15 @@ class inferencePipeline():
 
         print(f"Using device: {self.device} for inference pipeline of freeze-omni model.")
 
-        with open( os.path.join(f'{os.path.dirname(__file__)}', '..', self.args['model_path'], "/audiollm/train.yaml"), 'r') as fin:
+        with open( os.path.join(f'{os.path.dirname(__file__)}', '..', self.args['model_path'], 'audiollm/train.yaml'), 'r') as fin:
             configs = yaml.safe_load(fin)
-            configs['cmvn_file'] = os.path.join(f'{os.path.dirname(__file__)}', '..', self.args['model_path'], "/audiollm/global_cmvn")
+            configs['cmvn_file'] = os.path.join(f'{os.path.dirname(__file__)}', '..', self.args['model_path'], "audiollm/global_cmvn")
             configs['model_conf']['llm_path'] = os.path.join(f'{os.path.dirname(__file__)}', '..', self.args['llm_path'])
 
         # Init asr model from configs
         self.model = init_encoder_llm(device = self.device, configs = configs)
         
-        load_checkpoint(self.model, f'{os.path.dirname(__file__)}' + self.args['model_path'] + "/audiollm/final.pt")
+        load_checkpoint(self.model, os.path.join(f'{os.path.dirname(__file__)}', '..', self.args['model_path'],"audiollm/final.pt"))
         self.model = self.model.to(self.device)
         self.model.eval()
 
