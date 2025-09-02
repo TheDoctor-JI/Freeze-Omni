@@ -35,12 +35,12 @@ class AudioFeatureGating:
         if fbank_config:
             self.feat_dim = fbank_config['feat_dim']
 
-            self.minimal_chunk_dur = fbank_config['expected_audio_chunk_duration_in_sec']
+            self.minimal_chunk_dur = fbank_config['minimal_processing_chunk_duration']
             self.expected_audio_chunk_duration_in_sec = AudioFeatureGating.get_expected_proc_chunk_dur(
                 self.minimal_chunk_dur,
                 source_chunk_size_sec
             )
-            self.logger.info(f'Processing chunk duration set to be {self.expected_audio_chunk_duration_in_sec}')
+            print(f'Processing chunk duration set to be {self.expected_audio_chunk_duration_in_sec}')
             
             self.audio_to_proc_per_step_in_sec = fbank_config['audio_to_proc_per_step_in_sec']
             self.step_size_in_sec = fbank_config['step_size_in_sec']
@@ -50,9 +50,9 @@ class AudioFeatureGating:
             raise ValueError("Invalid fbank_config provided.")
 
         ## Check for integer multiply
-        if self.expected_audio_chunk_duration_in_sec % self.audio_to_proc_per_step_in_sec != 0:
+        if abs(self.expected_audio_chunk_duration_in_sec % self.audio_to_proc_per_step_in_sec) > 1e-6:
             raise ValueError(f"Expected audio chunk duration {self.expected_audio_chunk_duration_in_sec} to be a multiple of step size {self.audio_to_proc_per_step_in_sec}.")
-        if self.audio_to_proc_per_step_in_sec & self.step_size_in_sec != 0:
+        if abs(self.audio_to_proc_per_step_in_sec % self.step_size_in_sec) > 1e-6:
             raise ValueError(f"Expected audio to process per step {self.audio_to_proc_per_step_in_sec} to be a multiple of step size {self.step_size_in_sec}.")
 
 
