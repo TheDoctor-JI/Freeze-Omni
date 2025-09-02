@@ -6,7 +6,24 @@ class AudioFeatureGating:
     Handles stateful fbank feature extraction for every incoming audio chunk
     and gates the features to the next stage based on VAD status.
     """
-    def __init__(self, sample_rate, cache_history_size=10, onset_input_chunk_cache_size=6, fbank_config=None):
+
+    def get_expected_proc_chunk_dur(minimal_val: float, env_source_chunk_size: float):
+        multiply_int = 0
+        while True:
+            multiply_int += 1
+            if multiply_int * env_source_chunk_size >= minimal_val:
+                return multiply_int * env_source_chunk_size
+            
+
+
+    def __init__(
+            self, 
+            sample_rate, 
+            source_chunk_size_sec,
+            cache_history_size=10, 
+            onset_input_chunk_cache_size=6, 
+            fbank_config=None
+        ):
 
         self.sample_rate = sample_rate
         self.fbank_config = fbank_config
@@ -17,17 +34,27 @@ class AudioFeatureGating:
         ## Read physical time configs
         if fbank_config:
             self.feat_dim = fbank_config['feat_dim']
-            self.expected_audio_chunk_duration_in_sec = fbank_config['expected_audio_chunk_duration_in_sec']
+
+            self.minimal_chunk_dur = fbank_config['expected_audio_chunk_duration_in_sec']
+            self.expected_audio_chunk_duration_in_sec = AudioFeatureGating.get_expected_proc_chunk_dur(
+                self.minimal_chunk_dur,
+                source_chunk_size_sec
+            )
+            self.logger.info(f'Processing chunk duration set to be {self.expected_audio_chunk_duration_in_sec}')
+            
             self.audio_to_proc_per_step_in_sec = fbank_config['audio_to_proc_per_step_in_sec']
             self.step_size_in_sec = fbank_config['step_size_in_sec']
-            self.context_duration_in_sec = fbank_config['context_duration_in_sec']
+            self.context_duration_in_sec = source_chunk_size_sec * fbank_config['context_duration_in_env_sent_chunk'] ## Use a number of chunks sent by the physical environment as the context
 
-        else: # Fallback to defaults if no config is provided
-            self.feat_dim = 80
-            self.expected_audio_chunk_duration_in_sec = 0.16 ## 160ms
-            self.audio_to_proc_per_step_in_sec = 0.025 ##25ms
-            self.step_size_in_sec = 0.01 ## 10ms
-            self.context_duration_in_sec = 0.03 ## 30ms
+        else:
+            raise ValueError("Invalid fbank_config provided.")
+
+        ## Check for integer multiply
+        if self.expected_audio_chunk_duration_in_sec % self.audio_to_proc_per_step_in_sec != 0:
+            raise ValueError(f"Expected audio chunk duration {self.expected_audio_chunk_duration_in_sec} to be a multiple of step size {self.audio_to_proc_per_step_in_sec}.")
+        if self.audio_to_proc_per_step_in_sec & self.step_size_in_sec != 0:
+            raise ValueError(f"Expected audio to process per step {self.audio_to_proc_per_step_in_sec} to be a multiple of step size {self.step_size_in_sec}.")
+
 
         ## Convert from physical time to frames
         self.frames_to_proc_per_step = int(self.audio_to_proc_per_step_in_sec * self.sample_rate)

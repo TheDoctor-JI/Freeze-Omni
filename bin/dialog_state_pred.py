@@ -71,21 +71,35 @@ class DialogStateParams:
     DIALOG_STATE_PRED_CONFIGS = get_args()
     MAX_PIPELINE_NUN = 1
     PIPELINE_POOL = pipelineObjectPool(size=MAX_PIPELINE_NUN, configs=DIALOG_STATE_PRED_CONFIGS)
-    EXPECTED_SAMPLING_RATE = DIALOG_STATE_PRED_CONFIGS['audio']['expected_sampling_rate']
+    EXPECTED_SAMPLING_RATE = 16000
     EXPECTED_ENCODING = 's16le'
     RESPONSE_THRESHOLD = DIALOG_STATE_PRED_CONFIGS['dialog_state_decision']['resp_threshold']
     SLEEP_INTERVAL = DIALOG_STATE_PRED_CONFIGS['thread_sleep_interval']
 
-    def __init__(self, sid, socketio, event_outlet, user_ipu_outlet_list: list, parent_logger=None):
+    def __init__(
+            self, 
+            sid, 
+            socketio, 
+            event_outlet, 
+            user_ipu_outlet_list: list, 
+            environment_audio_config: dict,
+            parent_logger=None):
         try:
             self.sid = sid
             self.tm_sid = None
             self.event_outlet = event_outlet
             self.user_ipu_outlet_list = user_ipu_outlet_list
+            self.environment_audio_config = environment_audio_config
             if parent_logger is not None:
                 self.logger = parent_logger.getChild(f"DialogStateParams")
             else:
                 self.logger = setup_logger(f"{self.sid}_DialogStateParams", file_log_level="DEBUG", terminal_log_level="INFO")
+
+            if self.environment_audio_config['audio_sr'] != DialogStateParams.EXPECTED_SAMPLING_RATE:
+                raise ValueError(f"Expected audio sampling rate {DialogStateParams.EXPECTED_SAMPLING_RATE}, but got {self.environment_audio_config['audio_sr']}")
+
+            if self.environment_audio_config['audio_format'] != DialogStateParams.EXPECTED_ENCODING:
+                raise ValueError(f"Expected audio format {DialogStateParams.EXPECTED_ENCODING}, but got {self.environment_audio_config['audio_format']}")
 
             ## Config for dialog state prediction
             self.dialog_state_pred_configs = DialogStateParams.DIALOG_STATE_PRED_CONFIGS
@@ -119,13 +133,15 @@ class DialogStateParams:
 
             self.feature_gater = {
                 'user': AudioFeatureGating(
-                    sample_rate=self.dialog_state_pred_configs['audio']['expected_sampling_rate'],
+                    sample_rate=self.environment_audio_config['audio_sr'],
+                    source_chunk_size_sec = self.environment_audio_config['audio_chunk_size_sec'],
                     cache_history_size=self.dialog_state_pred_configs['audio_feature_gating']['feature_gating_history_size'],
                     onset_input_chunk_cache_size=self.dialog_state_pred_configs['audio_feature_gating']['onset_input_chunk_cache_size'],
                     fbank_config=self.dialog_state_pred_configs['audio_feature_gating']['fbank']
                 ),
                 'system': AudioFeatureGating(
-                    sample_rate=self.dialog_state_pred_configs['audio']['expected_sampling_rate'],
+                    sample_rate=self.environment_audio_config['audio_sr'],
+                    source_chunk_size_sec = self.environment_audio_config['audio_chunk_size_sec'],
                     cache_history_size=self.dialog_state_pred_configs['audio_feature_gating']['feature_gating_history_size'],
                     onset_input_chunk_cache_size=self.dialog_state_pred_configs['audio_feature_gating']['onset_input_chunk_cache_size'],
                     fbank_config=self.dialog_state_pred_configs['audio_feature_gating']['fbank']
@@ -418,7 +434,6 @@ class DialogStateParams:
             'enc': DialogStateParams.EXPECTED_ENCODING,
             'time_stamp': None  # Use current time as timestamp
         }
-
 
     def vad_annotation(self, identity):
         """

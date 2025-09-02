@@ -4,9 +4,6 @@ device: 'cuda:0'
 thread_sleep_interval: 0.005
 debug_time: True
 
-audio:
-  expected_sampling_rate: 16000 # From dialog_state_monitoring.html, line 306
-
 
 vad:
   use_standalone_vad: true # From start_monitoring.sh, line 48 (flag is present)
@@ -23,17 +20,12 @@ audio_feature_gating:
   fbank:
     feat_dim: 80 # From AudioFeatureGating.py, line 10
 
-    # ## for dtln processing
-    # expected_audio_chunk_duration_in_sec: 0.256 ## 256ms
-    # audio_to_proc_per_step_in_sec: 0.016 ##16ms
-    # step_size_in_sec: 0.008 ## 10ms
-    # context_duration_in_sec: 0.032 ## 32ms overlap for each input chunk
+    
+    minimal_processing_chunk_duration: 0.21 ## 210ms, as dictated by the performance of the sub-sequent modules
 
-    ## for webrtc processing
-    expected_audio_chunk_duration_in_sec: 0.24 ## 240ms
-    audio_to_proc_per_step_in_sec: 0.016 ##16ms
-    step_size_in_sec: 0.008 ## 10ms
-    context_duration_in_sec: 0.040 ## 40ms overlap for each input chunk
+    audio_to_proc_per_step_in_sec: 0.016
+    step_size_in_sec: 0.008
+    context_duration_in_env_sent_chunk: 1 ## Preserve a number of audio chunks for context
 
 inference_control:
   top_k: 5 # From server_alt.py, line 35 (argparse default is 5)
