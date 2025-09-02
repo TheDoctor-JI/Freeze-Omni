@@ -50,9 +50,9 @@ class AudioFeatureGating:
             raise ValueError("Invalid fbank_config provided.")
 
         ## Check for integer multiply
-        if abs(self.expected_audio_chunk_duration_in_sec % self.audio_to_proc_per_step_in_sec) > 1e-6:
+        if int(self.expected_audio_chunk_duration_in_sec * 1000) % int(self.audio_to_proc_per_step_in_sec * 1000) != 0 :
             raise ValueError(f"Expected audio chunk duration {self.expected_audio_chunk_duration_in_sec} to be a multiple of step size {self.audio_to_proc_per_step_in_sec}.")
-        if abs(self.audio_to_proc_per_step_in_sec % self.step_size_in_sec) > 1e-6:
+        if int(self.audio_to_proc_per_step_in_sec * 1000) % int(self.step_size_in_sec * 1000) != 0:
             raise ValueError(f"Expected audio to process per step {self.audio_to_proc_per_step_in_sec} to be a multiple of step size {self.step_size_in_sec}.")
 
 
