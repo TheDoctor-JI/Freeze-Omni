@@ -180,7 +180,7 @@ class DialogStateParams:
         except Exception as e:
             self.logger.error(f"Error initializing DialogStateParams: {e}")
             self.release()
-            raise
+            raise e
     
     def set_tm_sid(self, tm_sid):
         self.tm_sid = tm_sid
@@ -259,7 +259,7 @@ class DialogStateParams:
         except Exception as e:
             self.logger.error(f"Error resetting context: {e}")
             self.release()
-            raise
+            raise e
     
     def start_all_threads(self):
         """Start all necessary threads for dialog state prediction"""
@@ -309,7 +309,7 @@ class DialogStateParams:
         except Exception as e:
             self.logger.error(f"Error starting threads: {e}")
             self.release()
-            raise
+            raise e
 
     def set_dialog_callback(self, callback):
         """Set callback function to be called when dialog_ss is predicted"""
@@ -424,7 +424,7 @@ class DialogStateParams:
         except Exception as e:
             self.logger.error(f"Error receiving chunks: {e}")
             self.release()
-            raise
+            raise e
 
     def reset_vad_aud_aggregation(self, identity):
 
@@ -619,7 +619,7 @@ class DialogStateParams:
         except Exception as e:
             self.logger.error(f"Error annotation vad: {e}")
             self.release()
-            raise
+            raise e
 
     def feature_gating(self, identity):
         """
@@ -708,7 +708,7 @@ class DialogStateParams:
         except Exception as e:
             self.logger.error(f"Error producing fbank features: {e}")
             self.release()
-            raise
+            raise e
 
     def serialize_context(self):
         """
@@ -746,7 +746,7 @@ class DialogStateParams:
         except Exception as e:
             self.logger.error(f"Error serializing features: {e}")
             self.release()
-            raise
+            raise e
 
     def predict_dialog_state(self):
         """
@@ -807,7 +807,7 @@ class DialogStateParams:
         except Exception as e:
             self.logger.error(f"Error predicting dialogue state: {e}")
             self.release()
-            raise
+            raise e
         
     def llm_prefill(self, data):
         """
