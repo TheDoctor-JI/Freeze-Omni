@@ -107,12 +107,17 @@ class RelPositionalEncoding(PositionalEncoding):
         pe_index = pe_index % self.max_len
         xs = xs * self.xscale
 
+        # Infer device from input tensor to ensure correct device placement
+        device = xs.device
+        if self.div_term.device != device:
+            self.div_term = self.div_term.to(device)
+        
         # pe = torch.zeros(self.full_chunk_size, self.d_model)
-        pe = torch.zeros(pe_length, self.d_model)
+        pe = torch.zeros(pe_length, self.d_model, device=device)
         position = torch.arange(max(0, pe_index-self.full_chunk_size), 
                                 max(0, pe_index-self.full_chunk_size) 
                                 + pe_length, # self.full_chunk_size,
-                                dtype=torch.float32).unsqueeze(1)
+                                dtype=torch.float32, device=device).unsqueeze(1)
         pe[:, 0::2] = torch.sin(position * self.div_term)
         pe[:, 1::2] = torch.cos(position * self.div_term)
         pos_emb = pe.unsqueeze(0)

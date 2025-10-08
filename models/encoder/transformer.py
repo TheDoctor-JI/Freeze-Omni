@@ -276,7 +276,6 @@ class Transformer(torch.nn.Module):
         else:
             pe_length = buffer[0][0].size(2) + xs.size(1)
         xs, pos_emb, pe_index = self.pe.infer(xs, pe_index, pe_length)
-        pos_emb = pos_emb.to('cuda')
         xs, pos_emb, buffer, buffer_index, buffer_out = self.encoders.infer(xs, pos_emb, 
                                                                             buffer, buffer_index, buffer_out)
 
