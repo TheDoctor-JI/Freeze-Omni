@@ -13,6 +13,7 @@ import torchaudio
 import datetime
 import builtins
 import numpy as np
+import traceback
 
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -178,7 +179,7 @@ class DialogStateParams:
             
             
         except Exception as e:
-            self.logger.error(f"Error initializing DialogStateParams: {e}")
+            self.logger.error(f"Error initializing DialogStateParams: {e}\nFull traceback: {traceback.format_exc()}")
             self.release()
             raise e
     
@@ -257,7 +258,7 @@ class DialogStateParams:
             self.logger.debug(f"Context reset successfully.")
 
         except Exception as e:
-            self.logger.error(f"Error resetting context: {e}")
+            self.logger.error(f"Error resetting context: {e}\nFull traceback: {traceback.format_exc()}")
             self.release()
             raise e
     
@@ -307,7 +308,7 @@ class DialogStateParams:
             self.dialog_state_prediction_thread.start()
 
         except Exception as e:
-            self.logger.error(f"Error starting threads: {e}")
+            self.logger.error(f"Error starting threads: {e}\nFull traceback: {traceback.format_exc()}")
             self.release()
             raise e
 
@@ -349,7 +350,7 @@ class DialogStateParams:
                 self.dialog_state_prediction_thread.join(timeout=2)
 
         except Exception as e:
-            self.logger.error(f"Error releasing resources: {e}")
+            self.logger.error(f"Error releasing resources: {e}\nFull traceback: {traceback.format_exc()}")
 
     def enqueue_audio_data(self, identity, audio_data_dict):
         """
@@ -422,7 +423,7 @@ class DialogStateParams:
                 self.raw_pcm_queue[identity].put(new_audio_dat_dict)
         
         except Exception as e:
-            self.logger.error(f"Error receiving chunks: {e}")
+            self.logger.error(f"Error receiving chunks: {e}\nFull traceback: {traceback.format_exc()}")
             self.release()
             raise e
 
@@ -617,7 +618,7 @@ class DialogStateParams:
             self.logger.debug(f"Sid: {self.sid} Stopping standalone VAD thread for '{identity}'")
         
         except Exception as e:
-            self.logger.error(f"Error annotation vad: {e}")
+            self.logger.error(f"Error annotation vad: {e}\nFull traceback: {traceback.format_exc()}")
             self.release()
             raise e
 
@@ -706,7 +707,7 @@ class DialogStateParams:
             self.logger.debug(f"Sid: {self.sid} Stopping feature gating thread for '{identity}'.")
 
         except Exception as e:
-            self.logger.error(f"Error producing fbank features: {e}")
+            self.logger.error(f"Error producing fbank features: {e}\nFull traceback: {traceback.format_exc()}")
             self.release()
             raise e
 
@@ -744,7 +745,7 @@ class DialogStateParams:
             self.logger.debug(f"Sid: {self.sid} Stopping context serializer thread.")
 
         except Exception as e:
-            self.logger.error(f"Error serializing features: {e}")
+            self.logger.error(f"Error serializing features: {e}\nFull traceback: {traceback.format_exc()}")
             self.release()
             raise e
 
@@ -805,7 +806,7 @@ class DialogStateParams:
                             )
 
         except Exception as e:
-            self.logger.error(f"Error predicting dialogue state: {e}")
+            self.logger.error(f"Error predicting dialogue state: {e}\nFull traceback: {traceback.format_exc()}")
             self.release()
             raise e
         
