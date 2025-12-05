@@ -60,6 +60,9 @@ original_print = builtins.print
 builtins.print = custom_print
 
 
+LOG_PROCESSING = False
+
+
 '''
 Main logic for dialog state prediction
 '''
@@ -114,7 +117,8 @@ class DialogStateParams:
             if self.pipeline_obj is None:
                 raise Exception("Failed to get pipeline object from pool")
             else:
-                self.logger.debug(f"Acquired pipeline object {self.pipeline_obj.id} for dialog state prediction.")
+                if LOG_PROCESSING:
+                    self.logger.debug(f"Acquired pipeline object {self.pipeline_obj.id} for dialog state prediction.")
                 self.pipeline_obj.pipeline_proc.setup_logger(self.logger)
 
             ## Internal parameters for this class
@@ -496,14 +500,14 @@ class DialogStateParams:
                     ## Reset the aggregated audio data
                     self.reset_vad_aud_aggregation(identity)
 
-                if(self.debug_time):
+                if(LOG_PROCESSING and self.debug_time):
                     self.logger.debug(f"Sid: {self.sid} VAD received raw audio chunk of size: {len(sufficient_audio_data_dict['audio'])} for '{identity}'")
                     
                 ## Run VAD prediction to get annotated audio
                 ## Return: {'audio': audio_chunk, 'status': 'ipu_sl', 'cached_audio': [chunk1, chunk2...], 'time_stamp': a timestamp}
                 annotated_audio = self.standalone_vad[identity].predict(sufficient_audio_data_dict)
 
-                if(self.debug_time):
+                if(LOG_PROCESSING and self.debug_time):
                     self.logger.debug(f"Sid: {self.sid} VAD annotation done for {identity}.")
                     
 
@@ -519,7 +523,7 @@ class DialogStateParams:
 
                     total_ipus += 1
                     
-                    if(self.debug_time):##VAD annotation usually takes less than 10ms
+                    if(LOG_PROCESSING and self.debug_time):##VAD annotation usually takes less than 10ms
                         self.logger.debug(f"Sid: {self.sid} SL chunk obtained the #{total_ipus} ipu of idetity={identity}")
 
                     ## For each user IPU outlet, instantiate a new IPUHandle object for all audio data associated with this IPU
@@ -555,7 +559,7 @@ class DialogStateParams:
 
                     vad_state = False
 
-                    if self.debug_time:##VAD annotation usually takes less than 10ms
+                    if LOG_PROCESSING and self.debug_time:##VAD annotation usually takes less than 10ms
                         self.logger.debug(f"Sid: {self.sid} EL chunk obtained for {self.current_ipu[identity][0].id}.")
 
 
@@ -657,7 +661,7 @@ class DialogStateParams:
                     gated_feature_data['identity'] = identity
                     gated_feature_data['ipu_id'] = annotated_audio['ipu_id']  # Use the IPU ID from the annotated audio 
 
-                    if self.debug_time:
+                    if LOG_PROCESSING and self.debug_time:
                         self.logger.debug(f"Sid: {self.sid} Approved audio feature, status: {gated_feature_data['status']}, identity: {identity}")
 
 
@@ -666,7 +670,7 @@ class DialogStateParams:
                     
                     if gated_feature_data['status'] == 'ipu_sl':
 
-                        if(self.debug_time):##fbank feature gating usually takes around 20ms
+                        if(LOG_PROCESSING and self.debug_time):##fbank feature gating usually takes around 20ms
                             self.logger.debug(f"Sid: {self.sid} SL chunk approved for {identity}.")
 
                         for i, feature in enumerate(gated_feature_data['feature_last_chunk']):
@@ -678,7 +682,7 @@ class DialogStateParams:
                                 'ipu_id': gated_feature_data['ipu_id']  ## Keep these features associated with the same IPU ID
                             }
 
-                            if self.debug_time:
+                            if LOG_PROCESSING and self.debug_time:
                                 self.logger.debug(f"Sid: {self.sid} Adding feature chunk, status: {feature_item['status']}, identity: {identity}")
 
                             self.context_serializer.add_feature_chunk(feature_item)
@@ -692,14 +696,14 @@ class DialogStateParams:
                             'ipu_id': gated_feature_data['ipu_id']
                         }
 
-                        if self.debug_time:
+                        if LOG_PROCESSING and self.debug_time:
                             self.logger.debug(f"Sid: {self.sid} Adding feature chunk, status: {feature_item['status']}, identity: {identity}")
 
                         self.context_serializer.add_feature_chunk(feature_item)
 
                     else:
 
-                        if self.debug_time:
+                        if LOG_PROCESSING and self.debug_time:
                             self.logger.debug(f"Sid: {self.sid} Adding feature chunk, status: {feature_item['status']}, identity: {identity}")
 
                         self.context_serializer.add_feature_chunk(gated_feature_data)
@@ -737,7 +741,7 @@ class DialogStateParams:
 
                 ## Send to the main processing queue for dialog state prediction
                 if feature_to_process is not None:
-                    if self.debug_time:
+                    if LOG_PROCESSING and self.debug_time:
                         self.logger.debug(f"Sid: {self.sid} Comitting feature to processed_pcm_queue, status: {feature_to_process['status']}, identity: {feature_to_process.get('identity', 'N/A')}")
 
                     self.processed_pcm_queue.put(feature_to_process)
@@ -780,21 +784,22 @@ class DialogStateParams:
                 
 
                 # Always run forward processing
-                if self.debug_time:
+                if LOG_PROCESSING and self.debug_time:
                     
                     self.logger.debug(f"Sid: {self.sid} Starting dialog state prediction for feature data of ipu {feature_data['ipu_id']} with status {feature_data['status']}")
                     
                 predicted_state = self.llm_prefill(feature_data)
                 total_prediction_cnt += 1
 
-                if self.debug_time:
+                if LOG_PROCESSING and self.debug_time:
                     self.logger.debug(f"Sid: {self.sid} Dialog state prediction done.")
 
 
                 ## Update the response requirement of the associated IPU based on the predicted state
                 if feature_data['identity'] == 'user':
 
-                    self.logger.debug(f"Sid: {self.sid} Updating dialog state for user IPU {feature_data['ipu_id']}. Latest prediction is {predicted_state}")
+                    if LOG_PROCESSING:
+                        self.logger.debug(f"Sid: {self.sid} Updating dialog state for user IPU {feature_data['ipu_id']}. Latest prediction is {predicted_state}")
 
                     user_ipu_handle_list = self.all_ipus['user'].get(feature_data['ipu_id'], [])
 
