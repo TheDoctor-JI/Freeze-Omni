@@ -79,6 +79,7 @@ class DialogStateParams:
     EXPECTED_ENCODING = 's16le'
     RESPONSE_THRESHOLD = DIALOG_STATE_PRED_CONFIGS['dialog_state_decision']['resp_threshold']
     SLEEP_INTERVAL = DIALOG_STATE_PRED_CONFIGS['thread_sleep_interval']
+    USE_VAD_FOR_FLOOR_OCCUPATION = True
 
     def __init__(
             self, 
@@ -555,6 +556,36 @@ class DialogStateParams:
                         ##Also forward it to the floor state machine (this is why we create len(self.user_ipu_outlet_list) + 1 IPU handles)
                         self.event_outlet(self.current_ipu[identity][len(self.user_ipu_outlet_list)])
 
+                        if DialogStateParams.USE_VAD_FOR_FLOOR_OCCUPATION:##Use VAD as a mock for VAP
+
+                            mock_event = {
+                                'user_speak_prob_near_future': 1,
+                                'user_speak_prob_far_future': 1,
+                                'is_occupying_channel': True,
+                                'last_time_occupying_channel': False,
+                                'timestamp': annotated_audio['time_stamp']
+                            }
+
+                            self.logger.debug(f'Mock user occupation onset at {mock_event['timestamp']}')
+
+                            ## Emit the mock VAP state to the gui for visualization
+                            emit_vap_state_update(
+                                socketio=self.socketio,
+                                sid=self.sid, 
+                                **mock_event
+                            )
+
+                            ## Also emit the mock VAP state to the event outlet for further processing
+                            self.event_outlet(
+                                FloorEvent(
+                                    event_data=mock_event,
+                                    event_type=FloorEventType.CHANNEL_OCCUPATION_REPORT
+                                )
+                            )
+
+
+
+
                 elif status == 'ipu_el':
 
                     vad_state = False
@@ -575,6 +606,37 @@ class DialogStateParams:
                 
                     ## Since this is the end of an IPU, reset the id
                     self.current_ipu[identity] = []
+
+
+                    if DialogStateParams.USE_VAD_FOR_FLOOR_OCCUPATION:##Use VAD as a mock for VAP
+
+                        mock_event = {
+                            'user_speak_prob_near_future': 0,
+                            'user_speak_prob_far_future': 0,
+                            'is_occupying_channel': False,
+                            'last_time_occupying_channel': True,
+                            'timestamp': annotated_audio['time_stamp']
+                        }
+
+                        self.logger.debug(f'Mock user occupation offset at {mock_event['timestamp']}')
+
+                        ## Emit the mock VAP state to the gui for visualization
+                        emit_vap_state_update(
+                            socketio=self.socketio,
+                            sid=self.sid, 
+                            **mock_event
+                        )
+
+                        ## Also emit the mock VAP state to the event outlet for further processing
+                        self.event_outlet(
+                            FloorEvent(
+                                event_data=mock_event,
+                                event_type=FloorEventType.CHANNEL_OCCUPATION_REPORT
+                            )
+                        )
+
+
+
 
                 elif status == 'ipu_cl':
 
