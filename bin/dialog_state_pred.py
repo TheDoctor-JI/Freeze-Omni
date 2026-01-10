@@ -649,6 +649,17 @@ class DialogStateParams:
 
                     vad_state = True
 
+
+                    if identity == 'user' and DialogStateParams.USE_VAD_FOR_FLOOR_OCCUPATION:##Sync vad state continuously, if we use this for floor occupation
+
+                            self.event_outlet(
+                                FloorEvent(
+                                    event_data=mock_event,
+                                    event_type=FloorEventType.CHANNEL_OCCUPATION_REPORT
+                                )
+                            )
+
+
                 else:
                     annotated_audio['ipu_id'] = -1 ## This implies that the audio data do not belong to any IPU
 
