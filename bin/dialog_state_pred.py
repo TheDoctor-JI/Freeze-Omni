@@ -63,6 +63,8 @@ builtins.print = custom_print
 LOG_PROCESSING = False
 
 
+ENABLE_FREEZEOMNI_RESPONSE_PREDICTION = False
+
 '''
 Main logic for dialog state prediction
 '''
@@ -288,29 +290,30 @@ class DialogStateParams:
                     )
                     self.vad_threads[identity].start()
                 
-            # Start feature gating threads for user and system
-            self.feature_gating_threads = {}
-            for identity in ['user', 'system']:
-                self.feature_gating_threads[identity] = threading.Thread(
-                    target=self.feature_gating,
-                    args=(identity,),
-                    name=f"FeatureGating_Thread_{identity}"
+            if ENABLE_FREEZEOMNI_RESPONSE_PREDICTION:
+                # Start feature gating threads for user and system
+                self.feature_gating_threads = {}
+                for identity in ['user', 'system']:
+                    self.feature_gating_threads[identity] = threading.Thread(
+                        target=self.feature_gating,
+                        args=(identity,),
+                        name=f"FeatureGating_Thread_{identity}"
+                    )
+                    self.feature_gating_threads[identity].start()
+
+                # Start context serializer thread
+                self.context_serializer_thread = threading.Thread(
+                    target=self.serialize_context,
+                    name="ContextSerializer_Thread"
                 )
-                self.feature_gating_threads[identity].start()
+                self.context_serializer_thread.start()
 
-            # Start context serializer thread
-            self.context_serializer_thread = threading.Thread(
-                target=self.serialize_context,
-                name="ContextSerializer_Thread"
-            )
-            self.context_serializer_thread.start()
-
-            # Start dialog state prediction thread
-            self.dialog_state_prediction_thread = threading.Thread(
-                target=self.predict_dialog_state,
-                name="DialogStatePrediction_Thread"
-            )
-            self.dialog_state_prediction_thread.start()
+                # Start dialog state prediction thread
+                self.dialog_state_prediction_thread = threading.Thread(
+                    target=self.predict_dialog_state,
+                    name="DialogStatePrediction_Thread"
+                )
+                self.dialog_state_prediction_thread.start()
 
         except Exception as e:
             self.logger.error(f"Error starting threads: {e}\nFull traceback: {traceback.format_exc()}")
@@ -959,50 +962,53 @@ class DialogStateParams:
 
     def warmup_compiled_methods(self):
         ## Push a few audio samples to feature gating queue of both human and system
-        self.logger.info(f"Warming up dialogue state prediction compiled methods for user {self.sid}...")        
-        num_of_cl_chunks = 5
-        for identity in ['user', 'system']:
-            chunk_size = self.standalone_vad[identity].get_chunk_size()
-            ## Push directly to the feature gating queue
-            self.logger.debug(f"Fabricating sl chunk for {identity}")
-            self.annotated_audio_queue[identity].put({
-                'audio': np.zeros(chunk_size, dtype=np.float32),
-                'sr': DialogStateParams.EXPECTED_SAMPLING_RATE,
-                'enc': DialogStateParams.EXPECTED_ENCODING,
-                'status': 'ipu_sl',
-                'time_stamp': time.time(),
-                'ipu_id': 'warmup_ipu'
-            })
-            for i in range(num_of_cl_chunks):
-                self.logger.debug(f"Fabricating cl chunk {i + 1}/{num_of_cl_chunks} for {identity}")
+        if ENABLE_FREEZEOMNI_RESPONSE_PREDICTION:
+            self.logger.info(f"Warming up dialogue state prediction compiled methods for user {self.sid}...")        
+            num_of_cl_chunks = 5
+            for identity in ['user', 'system']:
+                chunk_size = self.standalone_vad[identity].get_chunk_size()
+                ## Push directly to the feature gating queue
+                self.logger.debug(f"Fabricating sl chunk for {identity}")
                 self.annotated_audio_queue[identity].put({
                     'audio': np.zeros(chunk_size, dtype=np.float32),
                     'sr': DialogStateParams.EXPECTED_SAMPLING_RATE,
                     'enc': DialogStateParams.EXPECTED_ENCODING,
-                    'status': 'ipu_cl',
+                    'status': 'ipu_sl',
                     'time_stamp': time.time(),
                     'ipu_id': 'warmup_ipu'
                 })
-            self.logger.debug(f"Fabricating el chunk for {identity}")
-            self.annotated_audio_queue[identity].put({
-                'audio': np.zeros(chunk_size, dtype=np.float32),
-                'sr': DialogStateParams.EXPECTED_SAMPLING_RATE,
-                'enc': DialogStateParams.EXPECTED_ENCODING,
-                'status': 'ipu_el',
-                'time_stamp': time.time(),
-                'ipu_id': 'warmup_ipu'
-            })
-            time.sleep(1)  # Give some time for the feature gating thread to process these samples before pushing for the other identity
+                for i in range(num_of_cl_chunks):
+                    self.logger.debug(f"Fabricating cl chunk {i + 1}/{num_of_cl_chunks} for {identity}")
+                    self.annotated_audio_queue[identity].put({
+                        'audio': np.zeros(chunk_size, dtype=np.float32),
+                        'sr': DialogStateParams.EXPECTED_SAMPLING_RATE,
+                        'enc': DialogStateParams.EXPECTED_ENCODING,
+                        'status': 'ipu_cl',
+                        'time_stamp': time.time(),
+                        'ipu_id': 'warmup_ipu'
+                    })
+                self.logger.debug(f"Fabricating el chunk for {identity}")
+                self.annotated_audio_queue[identity].put({
+                    'audio': np.zeros(chunk_size, dtype=np.float32),
+                    'sr': DialogStateParams.EXPECTED_SAMPLING_RATE,
+                    'enc': DialogStateParams.EXPECTED_ENCODING,
+                    'status': 'ipu_el',
+                    'time_stamp': time.time(),
+                    'ipu_id': 'warmup_ipu'
+                })
+                time.sleep(1)  # Give some time for the feature gating thread to process these samples before pushing for the other identity
 
-        self.logger.debug(f"Fabricated audio data for dialogue state prediction warm up, pending processing...")
+            self.logger.debug(f"Fabricated audio data for dialogue state prediction warm up, pending processing...")
 
-        time.sleep(15)
+            time.sleep(15)
 
-        ## Wait for the feature gating threads to finish processing
-        while self.processed_pcm_queue.queue.qsize() > 0:
-            time.sleep(0.1)
+            ## Wait for the feature gating threads to finish processing
+            while self.processed_pcm_queue.queue.qsize() > 0:
+                time.sleep(0.1)
 
-        ## Wait a bit longer to make sure the processing of the last chunk is done
-        time.sleep(5)
+            ## Wait a bit longer to make sure the processing of the last chunk is done
+            time.sleep(5)
 
-        self.logger.info(f"DialogParams: warm up complete.")
+            self.logger.info(f"DialogParams: warm up complete.")
+        else:
+            self.logger.info(f"DialogParams: warm up skipped as response prediction is disabled.")
