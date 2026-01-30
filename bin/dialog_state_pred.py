@@ -76,7 +76,8 @@ class DialogStateParams:
     ## Class variables:
     DIALOG_STATE_PRED_CONFIGS = get_args()
     MAX_PIPELINE_NUN = 1
-    PIPELINE_POOL = pipelineObjectPool(size=MAX_PIPELINE_NUN, configs=DIALOG_STATE_PRED_CONFIGS)
+    # Only load model weights if response prediction is enabled
+    PIPELINE_POOL = pipelineObjectPool(size=MAX_PIPELINE_NUN, configs=DIALOG_STATE_PRED_CONFIGS) if ENABLE_FREEZEOMNI_RESPONSE_PREDICTION else None
     EXPECTED_SAMPLING_RATE = 16000
     EXPECTED_ENCODING = 's16le'
     RESPONSE_THRESHOLD = DIALOG_STATE_PRED_CONFIGS['dialog_state_decision']['resp_threshold']
@@ -115,21 +116,28 @@ class DialogStateParams:
 
             ## Shared context
             self.socketio = socketio
-            self.pipeline_pool = DialogStateParams.PIPELINE_POOL
-            self.pipeline_obj = self.pipeline_pool.acquire()
-            if self.pipeline_obj is None:
-                raise Exception("Failed to get pipeline object from pool")
+            
+            # Only acquire pipeline if response prediction is enabled
+            if ENABLE_FREEZEOMNI_RESPONSE_PREDICTION:
+                self.pipeline_pool = DialogStateParams.PIPELINE_POOL
+                self.pipeline_obj = self.pipeline_pool.acquire()
+                if self.pipeline_obj is None:
+                    raise Exception("Failed to get pipeline object from pool")
+                else:
+                    if LOG_PROCESSING:
+                        self.logger.debug(f"Acquired pipeline object {self.pipeline_obj.id} for dialog state prediction.")
+                    self.pipeline_obj.pipeline_proc.setup_logger(self.logger)
+
+                ## Internal parameters for this class
+
+                # init default prompt
+                _, init_key_values, _, _, _ = self.pipeline_obj.pipeline_proc.speech_dialogue(None, identity = '', status='pre', 
+                                                                            role=self.dialog_state_pred_configs['inference_control']['default_prompt'])
+                self.system_role = deepcopy(init_key_values)
             else:
-                if LOG_PROCESSING:
-                    self.logger.debug(f"Acquired pipeline object {self.pipeline_obj.id} for dialog state prediction.")
-                self.pipeline_obj.pipeline_proc.setup_logger(self.logger)
-
-            ## Internal parameters for this class
-
-            # init default prompt
-            _, init_key_values, _, _, _ = self.pipeline_obj.pipeline_proc.speech_dialogue(None, identity = '', status='pre', 
-                                                                        role=self.dialog_state_pred_configs['inference_control']['default_prompt'])
-            self.system_role = deepcopy(init_key_values)
+                self.pipeline_pool = None
+                self.pipeline_obj = None
+                self.system_role = None
 
             
             # Dialog state prediction context
@@ -326,6 +334,8 @@ class DialogStateParams:
     
     def set_prompt(self, prompt):
         """Set system prompt and reset context"""
+        if not ENABLE_FREEZEOMNI_RESPONSE_PREDICTION:
+            return
         self.system_role = self.pipeline_obj.pipeline_proc.speech_dialogue(
                                                             audio = None, 
                                                             status='pre', 
@@ -336,7 +346,7 @@ class DialogStateParams:
         """Release resources"""
         try:
             self.stop_all_threads = True
-            if self.pipeline_obj:
+            if ENABLE_FREEZEOMNI_RESPONSE_PREDICTION and self.pipeline_obj:
                 self.pipeline_pool.release(self.pipeline_obj)
 
             ## Wait for all threads to finish
