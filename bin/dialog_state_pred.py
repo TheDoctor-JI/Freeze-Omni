@@ -685,11 +685,14 @@ class DialogStateParams:
                             audio_to_emit['cached_audio_int_list'] = [np_float32_audio_to_np_int16_audio(chunk).tolist() for chunk in annotated_audio['cached_audio']]
                         else:
                             audio_to_emit['cached_audio_int_list'] = []
-                        self.socketio.emit(
-                            'tm_audio_chunk', 
-                            audio_to_emit,
-                            to = self.tm_sid,
-                        )
+
+                        ## TBD: in the new scheme, only stream system audio to tm
+                        if identity == 'user':
+                            self.socketio.emit(
+                                'tm_audio_chunk', 
+                                audio_to_emit,
+                                to = self.tm_sid,
+                            )
                    
 
             self.logger.debug(f"Sid: {self.sid} Stopping standalone VAD thread for '{identity}'")
