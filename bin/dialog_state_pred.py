@@ -91,6 +91,7 @@ class DialogStateParams:
             event_outlet, 
             user_ipu_outlet_list: list, 
             environment_audio_config: dict,
+            use_audio_llm_for_tm: bool,
             parent_logger=None):
         try:
             self.sid = sid
@@ -98,6 +99,7 @@ class DialogStateParams:
             self.event_outlet = event_outlet
             self.user_ipu_outlet_list = user_ipu_outlet_list
             self.environment_audio_config = environment_audio_config
+            self.use_audio_llm_for_tm = use_audio_llm_for_tm
             if parent_logger is not None:
                 self.logger = parent_logger.getChild(f"DialogStateParams")
             else:
@@ -700,7 +702,7 @@ class DialogStateParams:
                             audio_to_emit['cached_audio_int_list'] = []
 
                         ## In the new scheme, only stream system audio to tm
-                        if identity == 'user':
+                        if self.use_audio_llm_for_tm and identity == 'user':
                             self.socketio.emit(
                                 'tm_audio_chunk', 
                                 audio_to_emit,
