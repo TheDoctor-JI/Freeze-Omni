@@ -33,7 +33,7 @@ from flask_socketio import disconnect
 from logger.logger import setup_logger
 from FloorState.floor_state_machine_io import FloorStateDef, FloorEvent, FloorEventType
 from FloorState.floor_state_emission import *
-from AudioLLMInterface.IPUHandle import IPUHandle
+from AudioLLMInterface.IPUHandle import IPUHandle, InterfaceType
 import shortuuid
 from utils.audio_helpers import np_float32_audio_to_audio_bytes, np_float32_audio_to_np_int16_audio
 
@@ -91,7 +91,7 @@ class DialogStateParams:
             event_outlet, 
             user_ipu_outlet_list: list, 
             environment_audio_config: dict,
-            use_audio_llm_for_tm: bool,
+            tm_llm_interface_type: InterfaceType,
             parent_logger=None):
         try:
             self.sid = sid
@@ -99,7 +99,7 @@ class DialogStateParams:
             self.event_outlet = event_outlet
             self.user_ipu_outlet_list = user_ipu_outlet_list
             self.environment_audio_config = environment_audio_config
-            self.use_audio_llm_for_tm = use_audio_llm_for_tm
+            self.tm_llm_interface_type = tm_llm_interface_type
             if parent_logger is not None:
                 self.logger = parent_logger.getChild(f"DialogStateParams")
             else:
@@ -702,7 +702,7 @@ class DialogStateParams:
                             audio_to_emit['cached_audio_int_list'] = []
 
                         ## In the new scheme, only stream system audio to tm
-                        if self.use_audio_llm_for_tm and identity == 'user':
+                        if (self.tm_llm_interface_type != InterfaceType.TEXTUAL_PIPELINE) and identity == 'user':
                             self.socketio.emit(
                                 'tm_audio_chunk', 
                                 audio_to_emit,
