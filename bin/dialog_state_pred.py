@@ -33,7 +33,8 @@ from flask_socketio import disconnect
 from logger.logger import setup_logger
 from FloorState.floor_state_machine_io import FloorStateDef, FloorEvent, FloorEventType
 from FloorState.floor_state_emission import *
-from AudioLLMInterface.IPUHandle import IPUHandle, InterfaceType
+from AudioLLMInterface.IPUHandle import IPUHandle
+from AudioLLMInterface.interface_type import InterfaceType
 import shortuuid
 from utils.audio_helpers import np_float32_audio_to_audio_bytes, np_float32_audio_to_np_int16_audio
 
